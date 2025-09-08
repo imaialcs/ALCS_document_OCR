@@ -2,7 +2,8 @@ import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview } from './types';
 import { withRetry } from './services/utils';
-import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon } from './components/icons';
+import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon } from './components/icons';
+import DataTable from './components/DataTable';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -144,43 +145,6 @@ const MultiFileUploader: React.FC<{
   );
 };
 
-const DataTable: React.FC<{ 
-  cardIndex: number;
-  headers: string[];
-  data: string[][];
-  onDataChange: (cardIndex: number, rowIndex: number, cellIndex: number, value: string) => void;
-}> = ({ cardIndex, headers, data, onDataChange }) => {
-  return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full bg-white">
-        <thead className="bg-gray-100">
-          <tr>
-            {headers.map((header, index) => (
-              <th key={index} className="px-4 py-2 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider">{header}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {(data || []).map((row, rowIndex) => (
-            <tr key={rowIndex} className="border-b">
-              {(row || []).map((cell, cellIndex) => (
-                <td key={cellIndex} className="px-4 py-2 whitespace-nowrap">
-                  <input
-                    type="text"
-                    value={cell || ''}
-                    onChange={(e) => onDataChange(cardIndex, rowIndex, cellIndex, e.target.value)}
-                    className="w-full px-1 py-0.5 border border-transparent focus:outline-none focus:border-blue-500 rounded-sm bg-transparent text-gray-900"
-                  />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
 const TranscriptionView: React.FC<{ 
   cardIndex: number;
   content: string;
@@ -291,6 +255,7 @@ const App = () => {
   const [processedData, setProcessedData] = useState<ProcessedData[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cancelProcessingRef = useRef(false);
   const [modalPreview, setModalPreview] = useState<FilePreview | null>(null);
   const [hasScrolledToResults, setHasScrolledToResults] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -314,7 +279,7 @@ const App = () => {
         }
       });
     };
-  }, [previews]);
+  }, []);
 
   useEffect(() => {
     if (processedData.length > 0 && !loading && !hasScrolledToResults) {
@@ -379,7 +344,7 @@ const App = () => {
         throw new Error('Could not get canvas context');
     }
     await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
-    return canvas.toDataURL('image/png');
+    return canvas.toDataURL('image/jpeg', 0.85);
   };
 
   const handleFilesUpload = useCallback(async (files: FileList) => {
@@ -501,11 +466,16 @@ const App = () => {
     setError(null);
     setProcessedData([]);
     setHasScrolledToResults(false);
+    cancelProcessingRef.current = false;
     
     let allExtractedData: ProcessedData[] = [];
 
     try {
       for (const p of previews) {
+        if (cancelProcessingRef.current) {
+          setError("処理がユーザーによって中断されました。");
+          break;
+        }
         const file = p.file;
         let pagesToProcess: { base64: string; mimeType: string; name: string }[] = [];
 
@@ -515,6 +485,10 @@ const App = () => {
           const numPages = pdf.numPages;
 
           for (let i = 1; i <= numPages; i++) {
+            if (cancelProcessingRef.current) {
+              setError("処理がユーザーによって中断されました。");
+              break;
+            }
             const page = await pdf.getPage(i);
             const viewport = page.getViewport({ scale: 2 }); // Render at a higher scale for better OCR quality
             const canvas = document.createElement('canvas');
@@ -536,10 +510,18 @@ const App = () => {
           pagesToProcess.push({ base64, mimeType, name: file.name });
         }
 
+        if (cancelProcessingRef.current) break;
+
         if (pagesToProcess.length > 0) {
           const result = await withRetry(() => processDocumentPages(pagesToProcess));
           allExtractedData.push(...result);
         }
+      }
+
+      if (cancelProcessingRef.current) {
+        setLoading(false);
+        setError("処理がユーザーによって中断されました。");
+        return;
       }
 
       const sanitizedAndValidatedData = allExtractedData.map(item => {
@@ -579,7 +561,7 @@ const App = () => {
           return null;
         }).filter((card): card is ProcessedData => card !== null);
 
-      if (allExtractedData.length > 0 && sanitizedAndValidatedData.length === 0) {
+      if (allExtractedData.length > 0 && sanitizedAndValidatedData.length === 0 && !cancelProcessingRef.current) {
         throw new Error("AIは応答しましたが、期待されるデータ形式と一致しませんでした。ファイルが対応形式であることを確認してください。");
       }
 
@@ -592,11 +574,6 @@ const App = () => {
             if (mergedDataMap.has(key)) {
                 const existingCard = mergedDataMap.get(key)!;
                 existingCard.data.push(...item.data);
-                existingCard.data.sort((a, b) => {
-                    const dateA = parseInt(a[0]?.trim(), 10) || 0;
-                    const dateB = parseInt(b[0]?.trim(), 10) || 0;
-                    return dateA - dateB;
-                });
             } else {
                 mergedDataMap.set(key, JSON.parse(JSON.stringify(item)));
             }
@@ -605,15 +582,19 @@ const App = () => {
         }
       });
 
-      setProcessedData([...Array.from(mergedDataMap.values()), ...finalData]);
+      if (!cancelProcessingRef.current) {
+        setProcessedData([...Array.from(mergedDataMap.values()), ...finalData]);
+      }
 
     } catch (e: any) {
         console.error(e);
-        const message = e.message || JSON.stringify(e);
-        if (message.includes('503') || message.toLowerCase().includes('overloaded') || message.toLowerCase().includes('unavailable')) {
-            setError("AIモデルが現在大変混み合っています。ご迷惑をおかけしますが、しばらく時間をおいてから再度お試しください。");
-        } else {
-            setError(`処理中に予期せぬエラーが発生しました:\n${message}`);
+        if (!cancelProcessingRef.current) {
+            const message = e.message || JSON.stringify(e);
+            if (message.includes('503') || message.toLowerCase().includes('overloaded') || message.toLowerCase().includes('unavailable')) {
+                setError("AIモデルが現在大変混み合っています。ご迷惑をおかけしますが、しばらく時間をおいてから再度お試しください。");
+            } else {
+                setError(`処理中に予期せぬエラーが発生しました:\n${message}`);
+            }
         }
     } finally {
       setLoading(false);
@@ -655,6 +636,43 @@ const App = () => {
       return newData;
     });
   };
+
+  const handleMoveCard = (index: number, direction: 'up' | 'down') => {
+    setProcessedData(prevData => {
+      const newData = [...prevData];
+      const item = newData[index];
+      const swapIndex = direction === 'up' ? index - 1 : index + 1;
+
+      if (swapIndex < 0 || swapIndex >= newData.length) {
+        return newData;
+      }
+
+      newData[index] = newData[swapIndex];
+      newData[swapIndex] = item;
+      return newData;
+    });
+  };
+
+  const handleMergeCard = (index: number) => {
+    setProcessedData(prevData => {
+      if (index === 0) return prevData; // 最初のカードは結合できない
+      
+      const newData = [...prevData];
+      const currentCard = newData[index];
+      const targetCard = newData[index - 1];
+
+      // 両方のカードがテーブルタイプであることを確認
+      if (currentCard.type === 'table' && targetCard.type === 'table') {
+        // ターゲットカードのデータに現在のカードのデータを追加
+        targetCard.data.push(...currentCard.data);
+
+        // 結合されたカードを削除
+        newData.splice(index, 1);
+      }
+      
+      return newData;
+    });
+  };
   
   const handleDownloadSingle = async (item: ProcessedData) => {
     if (!window.electronAPI) {
@@ -665,7 +683,7 @@ const App = () => {
     try {
         if (item.type === 'table') {
             const card = item as ProcessedTable;
-            const fileNameBase = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}`.replace(/[\/:*?"<>|]/g, '_') || 'Document';
+            const fileNameBase = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}`.replace(/[\\/:*?"<>|]/g, '_') || 'Document';
 
             let fileData: Uint8Array;
             let fileName: string;
@@ -697,7 +715,7 @@ const App = () => {
                 fileName = `${fileNameBase}_template_filled.xlsx`;
             } else {
                 const wb = XLSX.utils.book_new();
-                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\/:*?"<>|]/g, '').substring(0, 31);
+                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
                 const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
                 const ws = XLSX.utils.aoa_to_sheet(ws_data);
                 XLSX.utils.book_append_sheet(wb, ws, sheetName);
@@ -773,7 +791,7 @@ const App = () => {
         } else {
             const wb = XLSX.utils.book_new();
             tableData.forEach(card => {
-              const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\/:*?"<>|]/g, '').substring(0, 31);
+              const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
               const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
               const ws = XLSX.utils.aoa_to_sheet(ws_data);
               XLSX.utils.book_append_sheet(wb, ws, sheetName);
@@ -799,6 +817,7 @@ const App = () => {
           <p className="mt-2 text-sm text-gray-600 leading-relaxed">
             画像(PNG, JPG)やPDFをアップロードすると、AIが内容を読み取りデータ化します。<br />
             認識結果は画面上で修正でき、Excelファイルとしてダウンロード可能です。<br />
+            <span className="font-semibold text-blue-600">画像の向きを正すと、読み取り精度が向上します。</span><br />
             <span className="font-semibold text-orange-600">※PDFは画像に変換して処理しますが、ファイルサイズが大きいと時間がかかるため、画像ファイルの利用をお勧めします。</span>
           </p>
         </header>
@@ -872,7 +891,7 @@ const App = () => {
 
           </div>
           
-          <div className="text-center">
+          <div className="text-center flex justify-center items-center gap-4">
             <button
               onClick={handleProcess}
               disabled={loading || previews.length === 0}
@@ -880,6 +899,16 @@ const App = () => {
             >
               {loading ? ( <> <ProcessingIcon className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" /> 処理中... </> ) : '2. 処理を開始'}
             </button>
+            {loading && (
+              <button
+                onClick={() => {
+                  cancelProcessingRef.current = true;
+                }}
+                className="w-full sm:w-auto inline-flex justify-center items-center px-8 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700"
+              >
+                処理を中止
+              </button>
+            )}
           </div>
           
           {error && (
@@ -890,7 +919,7 @@ const App = () => {
           )}
 
           {processedData.length > 0 && (
-            <div ref={resultsRef} className="p-6 bg-white rounded-lg shadow-md">
+            <div ref={resultsRef} className="p-6 bg-white rounded-lg shadow-md max-w-full">
               <Suspense fallback={<div>Loading...</div>}> 
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
                   <h2 className="text-lg font-semibold text-gray-700">3. 結果の確認と修正</h2>
@@ -905,40 +934,60 @@ const App = () => {
                 </div>
                 <div className="space-y-8">
                   {processedData.map((item, index) => (
-                    <div key={index} className="border-t pt-6 first:border-t-0 first:pt-0">
-                      {item.type === 'table' ? (
-                        <>
-                          <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                              <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                  <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
-                                  <span className="text-gray-500">-</span>
-                                  <div className="flex items-center gap-1.5 flex-grow">
-                                      {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                      <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                  </div>
-                              </div>
-                              <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}の帳票をダウンロード`}>
-                                  <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                  この帳票をダウンロード
-                              </button>
-                          </div>
-                          <DataTable cardIndex={index} headers={item.headers} data={item.data} onDataChange={handleDataChange} />
-                        </>
-                      ) : (
-                        <>
-                          <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                              <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                  <DocumentTextIcon className="h-6 w-6 text-gray-600" />
-                                  <span>{item.fileName}</span>
-                              </div>
-                              <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
-                                  <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                  テキストファイルで保存
-                              </button>
-                          </div>
-                          <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
-                        </>
-                      )}
+                    <div key={index} className="flex items-start gap-2 border-t pt-6 first:border-t-0 first:pt-0">
+                      <div className="flex-grow">
+                        {item.type === 'table' ? (
+                          <>
+                            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                    <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                    <span className="text-gray-500">-</span>
+                                    <div className="flex items-center gap-1.5 flex-grow">
+                                        {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                        <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                    </div>
+                                </div>
+                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}の帳票をダウンロード`}>
+                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                    この帳票をダウンロード
+                                </button>
+                            </div>
+                            <DataTable cardIndex={index} headers={item.headers} data={item.data} onDataChange={handleDataChange} />
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                    <DocumentTextIcon className="h-6 w-6 text-gray-600" />
+                                    <span>{item.fileName}</span>
+                                </div>
+                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
+                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                    テキストファイルで保存
+                                </button>
+                            </div>
+                            <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
+                          </>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1 pt-1">
+                          <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
+                              <ArrowUpIcon className="w-5 h-5 text-gray-700" />
+                          </button>
+                          <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
+                              <ArrowDownIcon className="w-5 h-5 text-gray-700" />
+                          </button>
+                          {item.type === 'table' && (
+                            <button 
+                              onClick={() => handleMergeCard(index)} 
+                              disabled={index === 0 || processedData[index - 1]?.type !== 'table'}
+                              className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="上の表と結合"
+                            >
+                                <MergeIcon className="w-5 h-5 text-gray-700" />
+                            </button>
+                          )}
+                      </div>
                     </div>
                   ))}
                 </div>
