@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview } from './types';
 import { withRetry } from './services/utils';
-import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon } from './components/icons';
+import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon } from './components/icons';
 import DataTable from './components/DataTable';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
 import * as XLSX from 'xlsx';
@@ -256,6 +256,8 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancelProcessingRef = useRef(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [preMergeData, setPreMergeData] = useState<ProcessedData[] | null>(null);
   const [modalPreview, setModalPreview] = useState<FilePreview | null>(null);
   const [hasScrolledToResults, setHasScrolledToResults] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -467,6 +469,7 @@ const App = () => {
     setProcessedData([]);
     setHasScrolledToResults(false);
     cancelProcessingRef.current = false;
+    setIsCancelling(false);
     
     let allExtractedData: ProcessedData[] = [];
 
@@ -654,24 +657,43 @@ const App = () => {
   };
 
   const handleMergeCard = (index: number) => {
+    setPreMergeData(processedData);
     setProcessedData(prevData => {
-      if (index === 0) return prevData; // 最初のカードは結合できない
-      
-      const newData = [...prevData];
-      const currentCard = newData[index];
-      const targetCard = newData[index - 1];
-
-      // 両方のカードがテーブルタイプであることを確認
-      if (currentCard.type === 'table' && targetCard.type === 'table') {
-        // ターゲットカードのデータに現在のカードのデータを追加
-        targetCard.data.push(...currentCard.data);
-
-        // 結合されたカードを削除
-        newData.splice(index, 1);
+      if (index === 0) return prevData;
+  
+      const currentCard = prevData[index];
+      const targetCard = prevData[index - 1];
+  
+      if (currentCard.type !== 'table' || targetCard.type !== 'table') {
+        return prevData;
       }
-      
-      return newData;
+  
+      // イミュータブルな更新
+      const updatedData = prevData
+        .map((card, i) => {
+          if (i === index - 1) {
+            // ターゲットカードを新しいオブジェクトで更新
+            return {
+              ...card,
+              data: [
+                ...(card as ProcessedTable).data,
+                ...currentCard.data
+              ]
+            };
+          }
+          return card;
+        })
+        .filter((_, i) => i !== index); // 結合されたカードをフィルタリング
+  
+      return updatedData;
     });
+  };
+
+  const handleUndoMerge = () => {
+    if (preMergeData) {
+      setProcessedData(preMergeData);
+      setPreMergeData(null);
+    }
   };
   
   const handleDownloadSingle = async (item: ProcessedData) => {
@@ -903,10 +925,12 @@ const App = () => {
               <button
                 onClick={() => {
                   cancelProcessingRef.current = true;
+                  setIsCancelling(true);
                 }}
                 className="w-full sm:w-auto inline-flex justify-center items-center px-8 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700"
+                disabled={isCancelling}
               >
-                処理を中止
+                {isCancelling ? '処理を中止中...' : '処理を中止'}
               </button>
             )}
           </div>
@@ -923,14 +947,25 @@ const App = () => {
               <Suspense fallback={<div>Loading...</div>}> 
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
                   <h2 className="text-lg font-semibold text-gray-700">3. 結果の確認と修正</h2>
-                  <button
-                    onClick={handleDownloadAll}
-                    disabled={processedData.every(d => d.type !== 'table')}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                  >
-                    <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
-                    {outputMode === 'template' ? 'すべてテンプレートに転記' : 'すべてExcel形式でダウンロード'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {preMergeData && (
+                        <button
+                            onClick={handleUndoMerge}
+                            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50"
+                        >
+                            <UndoIcon className="-ml-1 mr-2 h-5 w-5" />
+                            結合を元に戻す
+                        </button>
+                    )}
+                    <button
+                        onClick={handleDownloadAll}
+                        disabled={processedData.every(d => d.type !== 'table')}
+                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    >
+                        <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
+                        {outputMode === 'template' ? 'すべてテンプレートに転記' : 'すべてExcel形式でダウンロード'}
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-8">
                   {processedData.map((item, index) => (
