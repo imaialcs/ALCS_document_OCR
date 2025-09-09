@@ -8,9 +8,8 @@ const UpdateNotification = lazy(() => import('./components/UpdateNotification'))
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
 
-if (pdfjsLib.version) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://aistudiocdn.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
-}
+// pdf.worker.mjsをローカルで提供するように修正
+pdfjsLib.GlobalWorkerOptions.workerSrc = `./pdfjs/pdf.worker.mjs`;
 
 const readFileAsBase64 = (file: File): Promise<{ base64: string; mimeType: string }> => {
   return new Promise((resolve, reject) => {

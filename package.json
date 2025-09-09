@@ -7,7 +7,7 @@
   "main": "main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/copy-worker.js",
     "dist": "npm run build && electron-builder",
     "start": "electron main.js",
     "preinstall": "npx rimraf node_modules/.cache/electron-builder"
