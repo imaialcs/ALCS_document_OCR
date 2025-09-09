@@ -6,10 +6,11 @@
 interface Window {
   electronAPI: {
     /**
-     * Asynchronously retrieves the Gemini API key from the main process.
-     * @returns A promise that resolves with the API key string.
+     * Invokes the Gemini OCR process in the main process.
+     * @param pages An array of page data to be processed.
+     * @returns A promise that resolves with the processed data.
      */
-    getApiKey: () => Promise<string>;
+    invokeGeminiOcr: (pages: { base64: string; mimeType: string, name: string }[]) => Promise<import('./types').ProcessedData[]>;
 
     /**
      * Listens for update status messages from the main process.

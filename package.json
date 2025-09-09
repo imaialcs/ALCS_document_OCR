@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "dist": "npm run build && electron-builder",
-    "start": "electron .",
+    "start": "electron main.js",
     "preinstall": "npx rimraf node_modules/.cache/electron-builder"
   },
   "dependencies": {

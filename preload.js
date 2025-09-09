@@ -3,8 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // レンダラープロセス（UI側）の `window` オブジェクトに、安全なAPIを公開します。
 contextBridge.exposeInMainWorld('electronAPI', {
-  // --- Secure API Key Retrieval ---
-  getApiKey: () => ipcRenderer.invoke('get-api-key'),
+  // --- Secure Gemini OCR Invocation ---
+  invokeGeminiOcr: (pages) => ipcRenderer.invoke('invoke-gemini-ocr', pages),
 
   // --- File Save API ---
   saveFile: (options, data) => ipcRenderer.invoke('save-file', options, data),
