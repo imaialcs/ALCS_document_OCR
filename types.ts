@@ -15,7 +15,26 @@ export interface ProcessedText {
   content: string;
 }
 
-export type ProcessedData = ProcessedTable | ProcessedText;
+export interface TimecardDay {
+  date: string;
+  dayOfWeek: string;
+  morningStart: string | null;
+  morningEnd: string | null;
+  afternoonStart: string | null;
+  afternoonEnd: string | null;
+}
+
+export interface ProcessedTimecard {
+  type: 'timecard';
+  title: {
+    yearMonth: string;
+    name: string;
+  };
+  days: TimecardDay[];
+  nameCorrected?: boolean;
+}
+
+export type ProcessedData = ProcessedTable | ProcessedText | ProcessedTimecard;
 
 export interface FilePreview {
   file: File;

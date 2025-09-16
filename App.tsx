@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { processDocumentPages } from './services/geminiService';
-import { ProcessedData, ProcessedTable, ProcessedText, FilePreview } from './types';
+import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay } from './types';
 import { withRetry } from './services/utils';
 import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon } from './components/icons';
 import DataTable from './components/DataTable';
@@ -224,7 +224,7 @@ const findMatchingSheetName = (fullName: string, sheetNames: string[]): string |
     }
 
     const trimmedFullName = fullName.trim();
-    const nameParts = trimmedFullName.split(/[　 ]+/ ).filter(p => p);
+    const nameParts = trimmedFullName.split(/[　 ]+/).filter(p => p);
 
     if (nameParts.length === 0) {
         return null;
@@ -527,7 +527,24 @@ const App = () => {
       }
 
       const sanitizedAndValidatedData = allExtractedData.map(item => {
-          if (item.type === 'table') {
+          if (item.type === 'timecard') {
+            const card = item as ProcessedTimecard;
+            if (!card || typeof card !== 'object' || !card.days) return null;
+            const sanitizedCard: ProcessedTimecard = {
+              type: 'timecard',
+              title: { yearMonth: String(card.title?.yearMonth ?? ""), name: String(card.title?.name ?? "") },
+              days: Array.isArray(card.days) ? card.days : [],
+              nameCorrected: card.nameCorrected
+            };
+            if (roster.length > 0) {
+                const bestMatch = findBestMatch(sanitizedCard.title.name, roster);
+                if (bestMatch && bestMatch !== sanitizedCard.title.name) {
+                    sanitizedCard.title.name = bestMatch;
+                    sanitizedCard.nameCorrected = true;
+                }
+            }
+            return sanitizedCard;
+          } else if (item.type === 'table') {
             const card = item as ProcessedTable;
             if (!card || typeof card !== 'object' || !card.headers || !card.data) return null;
             const sanitizedHeaders = Array.isArray(card.headers) ? card.headers.map(h => String(h ?? "")) : [];
@@ -580,6 +597,7 @@ const App = () => {
                 mergedDataMap.set(key, JSON.parse(JSON.stringify(item)));
             }
         } else {
+            // For 'timecard' and 'transcription', just push them
             finalData.push(item);
         }
       });
@@ -607,8 +625,15 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
-      if(item.type === 'table' && item.data[rowIndex]) {
+      if (item.type === 'table' && item.data[rowIndex]) {
         item.data[rowIndex][cellIndex] = value;
+      } else if (item.type === 'timecard' && item.days[rowIndex]) {
+          const day = item.days[rowIndex];
+          const keys: (keyof TimecardDay)[] = ['date', 'dayOfWeek', 'morningStart', 'morningEnd', 'afternoonStart', 'afternoonEnd'];
+          const key = keys[cellIndex];
+          if (key) {
+              (day[key] as string | null) = value || null;
+          }
       }
       return newData;
     });
@@ -629,7 +654,7 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
-      if (item.type === 'table' && item.title) {
+      if ((item.type === 'table' || item.type === 'timecard') && item.title) {
         item.title[field] = value;
         if (field === 'name') {
             item.nameCorrected = false;
@@ -697,12 +722,49 @@ const App = () => {
   
   const handleDownloadSingle = async (item: ProcessedData) => {
     if (!window.electronAPI) {
-        setError("ファイル保存機能が利用できません。アプリケーションを再起動してください。");
+        setError("ファイル保存機能が利用できません。");
         return;
     }
 
     try {
-        if (item.type === 'table') {
+        if (item.type === 'timecard') {
+            const card = item as ProcessedTimecard;
+            if (!excelTemplateData) {
+                setError('タイムカードを転記するには、Excelテンプレートファイルを指定してください。');
+                return;
+            }
+            const outputBookType = excelTemplateFile?.name.endsWith('.xlsm') ? 'xlsm' : 'xlsx';
+            const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
+            const newWb = XLSX.read(XLSX.write(tempWb, { type: 'array', bookType: outputBookType }), { type: 'array' }); // ワークブックをディープコピー
+
+            const targetSheetName = findMatchingSheetName(card.title.name, newWb.SheetNames);
+            if (!targetSheetName) {
+                setError(`テンプレートに氏名「${card.title.name}」のシートが見つかりません。`);
+                return;
+            }
+
+            const newWs = newWb.Sheets[targetSheetName];
+            if (!newWs) {
+                setError(`テンプレートのシート「${targetSheetName}」が見つかりませんでした。`);
+                return;
+            }
+            
+            card.days.forEach((day, index) => {
+                const row = 5 + index; // 6行目から開始 (0-indexed)
+                // E, F, H, I列にのみデータを書き込む
+                // G列とJ列は計算式があるためスキップ
+                XLSX.utils.sheet_add_aoa(newWs, [[day.morningStart || ""]], { origin: `E${row + 1}` });
+                XLSX.utils.sheet_add_aoa(newWs, [[day.morningEnd || ""]], { origin: `F${row + 1}` });
+                XLSX.utils.sheet_add_aoa(newWs, [[day.afternoonStart || ""]], { origin: `H${row + 1}` });
+                XLSX.utils.sheet_add_aoa(newWs, [[day.afternoonEnd || ""]], { origin: `I${row + 1}` });
+            });
+            
+            let fileNameBase = `${card.title.name}_${card.title.yearMonth}`.replace(/[\\/:*?"<>|]/g, '_');
+            let fileName = `${fileNameBase}_timecard.${outputBookType}`;
+            let fileData = XLSX.write(newWb, { bookType: outputBookType, type: 'array' });
+            await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
+
+        } else if (item.type === 'table') {
             const card = item as ProcessedTable;
             const fileNameBase = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}`.replace(/[\\/:*?"<>|]/g, '_') || 'Document';
 
@@ -714,26 +776,26 @@ const App = () => {
                     setError('テンプレートファイルとデータ開始セルを指定してください。');
                     return;
                 }
-                const templateWb = XLSX.read(excelTemplateData, { type: 'buffer' });
-                const targetSheetName = findMatchingSheetName(card.title.name, templateWb.SheetNames);
+                const outputBookType = excelTemplateFile?.name.endsWith('.xlsm') ? 'xlsm' : 'xlsx';
+                const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
+                const newWb = XLSX.read(XLSX.write(tempWb, { type: 'array', bookType: outputBookType }), { type: 'array' }); // ワークブックをディープコピー
+
+                const targetSheetName = findMatchingSheetName(card.title.name, newWb.SheetNames);
                 
                 if (!targetSheetName) {
                     setError(`テンプレートファイルに、氏名「${card.title.name}」に一致するシート（フルネーム/姓/名）が見つかりませんでした。`);
                     return;
                 }
 
-                const newWb = XLSX.utils.book_new();
-                templateWb.SheetNames.forEach((sheetName: string) => {
-                    const originalSheet = templateWb.Sheets[sheetName];
-                    const newSheet = JSON.parse(JSON.stringify(originalSheet));
-                    if (sheetName === targetSheetName) {
-                        XLSX.utils.sheet_add_aoa(newSheet, card.data, { origin: templateSettings.dataStartCell });
-                    }
-                    XLSX.utils.book_append_sheet(newWb, newSheet, sheetName);
-                });
-
-                fileData = XLSX.write(newWb, { bookType: 'xlsx', type: 'array' });
-                fileName = `${fileNameBase}_template_filled.xlsx`;
+                const newSheet = newWb.Sheets[targetSheetName];
+                if (!newSheet) {
+                    setError(`テンプレートのシート「${targetSheetName}」が見つかりませんでした。`);
+                    return;
+                }
+                XLSX.utils.sheet_add_aoa(newSheet, card.data, { origin: templateSettings.dataStartCell });
+                
+                fileData = XLSX.write(newWb, { bookType: outputBookType, type: 'array' });
+                fileName = `${fileNameBase}_template_filled.${outputBookType}`;
             } else {
                 const wb = XLSX.utils.book_new();
                 const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
@@ -760,69 +822,116 @@ const App = () => {
 
   const handleDownloadAll = async () => {
     if (!window.electronAPI) {
-        setError("ファイル保存機能が利用できません。アプリケーションを再起動してください。");
+        setError("ファイル保存機能が利用できません。");
         return;
     }
 
     const tableData = processedData.filter(d => d.type === 'table') as ProcessedTable[];
-    if (tableData.length === 0) return;
+    const timecardData = processedData.filter(d => d.type === 'timecard') as ProcessedTimecard[];
+
+    let fileData: Uint8Array;
+    let fileName: string;
 
     try {
-        let fileData: Uint8Array;
-        let fileName: string;
-
-        if (outputMode === 'template') {
-            if (!excelTemplateData || !excelTemplateFile || !templateSettings.dataStartCell) {
-                setError('テンプレートファイルとデータ開始セルを指定してください。');
+        if (timecardData.length > 0) {
+            if (!excelTemplateData || !excelTemplateFile) {
+                setError('タイムカードを転記するには、Excelテンプレートファイルを指定してください。');
                 return;
             }
-            const templateWb = XLSX.read(excelTemplateData, { type: 'buffer' });
-            const newWb = XLSX.utils.book_new();
+            const outputBookType = excelTemplateFile?.name.endsWith('.xlsm') ? 'xlsm' : 'xlsx';
+            const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
+            const newWb = XLSX.read(XLSX.write(tempWb, { type: 'array', bookType: outputBookType }), { type: 'array' }); // ワークブックをディープコピー
             const unmatchedNames: string[] = [];
 
-            const dataBySheet = new Map<string, string[][]>();
-            tableData.forEach(card => {
-                const targetSheetName = findMatchingSheetName(card.title.name, templateWb.SheetNames);
+            const dataBySheet = new Map<string, TimecardDay[]>();
+            timecardData.forEach(card => {
+                const targetSheetName = findMatchingSheetName(card.title.name, newWb.SheetNames);
                 if (targetSheetName) {
-                    dataBySheet.set(targetSheetName, card.data);
+                    dataBySheet.set(targetSheetName, card.days);
                 } else {
                     unmatchedNames.push(card.title.name);
                 }
             });
 
-            templateWb.SheetNames.forEach((sheetName: string) => {
-                const originalSheet = templateWb.Sheets[sheetName];
-                const newSheet = JSON.parse(JSON.stringify(originalSheet));
-                if (dataBySheet.has(sheetName)) {
-                    const dataToWrite = dataBySheet.get(sheetName)!;
-                    XLSX.utils.sheet_add_aoa(newSheet, dataToWrite, { origin: templateSettings.dataStartCell });
+            newWb.SheetNames.forEach((sheetName: string) => {
+                const newWs = newWb.Sheets[sheetName]; // コピーしたワークブックのシートを直接参照
+
+                if (dataBySheet.has(sheetName) && newWs) {
+                    const days = dataBySheet.get(sheetName)!;
+                    days.forEach((day, index) => {
+                        const row = 5 + index; // 6行目から開始
+                        // E, F, H, I列にのみデータを書き込む
+                        // G列とJ列は計算式があるためスキップ
+                        XLSX.utils.sheet_add_aoa(newWs, [[day.morningStart || ""]], { origin: `E${row + 1}` });
+                        XLSX.utils.sheet_add_aoa(newWs, [[day.morningEnd || ""]], { origin: `F${row + 1}` });
+                        XLSX.utils.sheet_add_aoa(newWs, [[day.afternoonStart || ""]], { origin: `H${row + 1}` });
+                        XLSX.utils.sheet_add_aoa(newWs, [[day.afternoonEnd || ""]], { origin: `I${row + 1}` });
+                    });
                 }
-                XLSX.utils.book_append_sheet(newWb, newSheet, sheetName);
             });
 
-            fileData = XLSX.write(newWb, { bookType: 'xlsx', type: 'array' });
-            fileName = `${excelTemplateFile.name.replace(/\.(xlsx|xls)$/, '')}_filled.xlsx`;
-            
+            fileData = XLSX.write(newWb, { bookType: outputBookType, type: 'array' });
+            fileName = `${excelTemplateFile.name.replace(/\.(xlsx|xls|xlsm)$/, '')}_timecards_filled.${outputBookType}`;
+            await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
+
             if (unmatchedNames.length > 0) {
-                setError(`転記が完了しましたが、一部の氏名のシートが見つかりませんでした。
-未転記: ${unmatchedNames.join(', ')}`);
+                setError(`転記完了。一部シートが見つかりませんでした: ${unmatchedNames.join(', ')}`);
             } else {
                 setError(null);
             }
-        } else {
-            const wb = XLSX.utils.book_new();
-            tableData.forEach(card => {
-              const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
-              const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
-              const ws = XLSX.utils.aoa_to_sheet(ws_data);
-              XLSX.utils.book_append_sheet(wb, ws, sheetName);
-            });
-            fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-            fileName = 'Documents_All.xlsx';
+
+        } else if (tableData.length > 0) {
+            if (outputMode === 'template') {
+                if (!excelTemplateData || !excelTemplateFile || !templateSettings.dataStartCell) {
+                    setError('テンプレートファイルとデータ開始セルを指定してください。');
+                    return;
+                }
+                const outputBookType = excelTemplateFile?.name.endsWith('.xlsm') ? 'xlsm' : 'xlsx';
+                const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
+                const newWb = XLSX.read(XLSX.write(tempWb, { type: 'array', bookType: outputBookType }), { type: 'array' }); // ワークブックをディープコピー
+                const unmatchedNames: string[] = [];
+
+                const dataBySheet = new Map<string, string[][]>();
+                tableData.forEach(card => {
+                    const targetSheetName = findMatchingSheetName(card.title.name, newWb.SheetNames);
+                    if (targetSheetName) {
+                        dataBySheet.set(targetSheetName, card.data);
+                    } else {
+                        unmatchedNames.push(card.title.name);
+                    }
+                });
+
+                newWb.SheetNames.forEach((sheetName: string) => {
+                    const newSheet = newWb.Sheets[sheetName]; // コピーしたワークブックのシートを直接参照
+                    if (dataBySheet.has(sheetName) && newSheet) {
+                        const dataToWrite = dataBySheet.get(sheetName)!;
+                        XLSX.utils.sheet_add_aoa(newSheet, dataToWrite, { origin: templateSettings.dataStartCell });
+                    }
+                });
+
+                fileData = XLSX.write(newWb, { bookType: outputBookType, type: 'array' });
+                fileName = `${excelTemplateFile.name.replace(/\.(xlsx|xls|xlsm)$/, '')}_filled.${outputBookType}`;
+                
+                if (unmatchedNames.length > 0) {
+                    setError(`転記が完了しましたが、一部の氏名のシートが見つかりませんでした。
+未転記: ${unmatchedNames.join(', ')}`);
+                } else {
+                    setError(null);
+                }
+            } else {
+                const wb = XLSX.utils.book_new();
+                tableData.forEach(card => {
+                  const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
+                  const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
+                  const ws = XLSX.utils.aoa_to_sheet(ws_data);
+                  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+                });
+                fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                fileName = 'Documents_All.xlsx';
+            }
+
+            await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
         }
-
-        await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
-
     } catch (err: any) {
         setError(`一括保存中にエラーが発生しました: ${err.message}`);
         console.error(err);
@@ -862,7 +971,7 @@ const App = () => {
                     <div className="mt-4 border-t pt-4 space-y-3">
                         <p className="text-sm text-gray-600">氏名が記載されたExcelファイル（名簿）をアップロードすると、OCRが読み取った氏名を自動で補正します。名簿のシート名と氏名が記載されている列を指定してください。</p>
                         <div className="flex items-center gap-4">
-                            <input type="file" id="roster-upload" className="hidden" accept=".xlsx, .xls" onChange={handleRosterUpload} />
+                            <input type="file" id="roster-upload" className="hidden" accept=".xlsx, .xls, .xlsm" onChange={handleRosterUpload} />
                             <label htmlFor="roster-upload" className="cursor-pointer rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">名簿ファイルを選択</label>
                             {rosterFile && <span className="text-sm text-gray-700">{rosterFile.name} ({roster.length}名)</span>}
                         </div>
@@ -896,7 +1005,7 @@ const App = () => {
                                 <div>
                                     <label htmlFor="template-upload" className="block text-sm font-medium text-gray-700 mb-1">テンプレートExcelファイル</label>
                                     <div className="flex items-center gap-4">
-                                        <input type="file" id="template-upload" className="hidden" accept=".xlsx, .xls" onChange={handleTemplateUpload} />
+                                        <input type="file" id="template-upload" className="hidden" accept=".xlsx, .xls, .xlsm" onChange={handleTemplateUpload} />
                                         <label htmlFor="template-upload" className="cursor-pointer rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">ファイルを選択</label>
                                         {excelTemplateFile && <span className="text-sm text-gray-700">{excelTemplateFile.name}</span>}
                                     </div>
@@ -958,11 +1067,11 @@ const App = () => {
                     )}
                     <button
                         onClick={handleDownloadAll}
-                        disabled={processedData.every(d => d.type !== 'table')}
+                        disabled={processedData.every(d => d.type === 'transcription')}
                         className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
                     >
                         <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
-                        {outputMode === 'template' ? 'すべてテンプレートに転記' : 'すべてExcel形式でダウンロード'}
+                        {processedData.some(d => d.type === 'timecard') ? 'すべてのタイムカードを転記' : outputMode === 'template' ? 'すべてテンプレートに転記' : 'すべてExcel形式でダウンロード'}
                     </button>
                   </div>
                 </div>
@@ -988,6 +1097,29 @@ const App = () => {
                             </div>
                             <DataTable cardIndex={index} headers={item.headers} data={item.data} onDataChange={handleDataChange} />
                           </>
+                        ) : item.type === 'timecard' ? (
+                            <>
+                                <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                    <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                        <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                        <span className="text-gray-500">-</span>
+                                        <div className="flex items-center gap-1.5 flex-grow">
+                                            {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                            <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                        </div>
+                                    </div>
+                                    <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをダウンロード`}>
+                                        <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                        テンプレートに転記
+                                    </button>
+                                </div>
+                                <DataTable 
+                                    cardIndex={index} 
+                                    headers={['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']} 
+                                    data={item.days.map(d => [d.date, d.dayOfWeek, d.morningStart || '', d.morningEnd || '', d.afternoonStart || '', d.afternoonEnd || ''])} 
+                                    onDataChange={handleDataChange} 
+                                />
+                            </>
                         ) : (
                           <>
                             <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
@@ -1014,7 +1146,7 @@ const App = () => {
                           {item.type === 'table' && (
                             <button 
                               onClick={() => handleMergeCard(index)} 
-                              disabled={index === 0 || processedData[index - 1]?.type !== 'table'}
+                              disabled={index === 0 || processedData[index - 1]?.type !== 'table' || item.type !== 'table'}
                               className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                               title="上の表と結合"
                             >
