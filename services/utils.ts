@@ -135,3 +135,52 @@ export async function withRetry<T>(
   }
   throw lastError; // Should not be reached if retries > 0
 }
+
+/**
+ * Transforms the timecard JSON from the Generative AI model into the format expected by the excel_handler.exe.
+ * @param timecardJson The JSON object returned from the Generative AI model.
+ * @param templatePath The absolute path to the Excel template file.
+ * @param sheetName The name of the sheet to write to.
+ * @returns The JSON object formatted for the excel_handler.exe.
+ */
+export const transformTimecardJsonForExcelHandler = (timecardJson: any, templatePath: string, sheetName: string): any => {
+  // Extract main data and convert it to a 2D array for the Excel sheet.
+  // Null values are converted to empty strings.
+  const dayData = timecardJson.days.map((day: any) => [
+    day.date || '',
+    day.dayOfWeek || '',
+    day.morningStart || '',
+    day.morningEnd || '',
+    day.afternoonStart || '',
+    day.afternoonEnd || '',
+  ]);
+
+  // Define the operations for the excel_handler.
+  // This includes writing the title, name, and the main timecard data.
+  // We assume a standard layout: Year/Month in C2, Name in C3, and daily data starting in B8.
+  const operations = [
+    {
+      sheet_name: sheetName,
+      data: [[timecardJson.title.yearMonth]],
+      start_cell: 'C2',
+    },
+    {
+      sheet_name: sheetName,
+      data: [[timecardJson.title.name]],
+      start_cell: 'C3',
+    },
+    {
+      sheet_name: sheetName,
+      data: dayData,
+      start_cell: 'B8',
+    },
+  ];
+
+  // Construct the final JSON object in the expected format.
+  const excelHandlerJson = {
+    template_path: templatePath,
+    operations: operations,
+  };
+
+  return excelHandlerJson;
+};

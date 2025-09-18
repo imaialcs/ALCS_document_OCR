@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay } from './types';
-import { withRetry } from './services/utils';
+import { withRetry, transformTimecardJsonForExcelHandler } from './services/utils';
 import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon } from './components/icons';
 import DataTable from './components/DataTable';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
@@ -758,59 +758,68 @@ const App = () => {
     try {
         if (item.type === 'timecard') {
             const card = item as ProcessedTimecard;
-            if (!excelTemplateFile?.path || !excelTemplateData) {
-                setError('タイムカードを転記するには、Excelテンプレートファイルを指定してください。');
-                return;
-            }
-
-            // テンプレートからシート名リストを取得
-            const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
-            const targetSheetName = findMatchingSheetName(card.title.name, tempWb.SheetNames);
-
-            if (!targetSheetName) {
-                setError(`テンプレートに氏名「${card.title.name}」に一致するシートが見つかりませんでした。`);
-                return;
-            }
-
-            // exceljsで書き込むためのデータを作成 (E, F, H, I列に対応)
-            const dataToWrite = card.days.map(day => [
-                day.morningStart || null,
-                day.morningEnd || null,
-                null, // G列はスキップ
-                day.afternoonStart || null,
-                day.afternoonEnd || null,
-            ]);
-
-            // mainプロセスに渡す操作の配列を作成
-            const operations = [{
-                sheetName: targetSheetName,
-                data: dataToWrite,
-                startRow: 6, // 6行目から
-                startCol: 5, // E列から
-            }];
-
-            // mainプロセスにExcelファイルへの書き込みを依頼
-            const pythonArgs = {
-                template_path: excelTemplateFile.path,
-                operations: operations.map(op => ({
-                    sheet_name: op.sheetName,
-                    data: op.data,
-                    start_cell: `${String.fromCharCode(64 + op.startCol)}${op.startRow}` // E6のような文字列に変換
-                }))
-            };
-            // window.electronAPI.runPythonScript の型定義を拡張するか、型アサーションを使用
-            const result = await (window.electronAPI as any).runPythonScript({
-                args: pythonArgs,
-            });
-
-            if (result.success && result.message) {
-                setUpdateStatus({ message: result.message, transient: true });
-                // テンプレートに転記後、ファイルを開く
-                if (excelTemplateFile?.path) {
-                    await window.electronAPI.openFile(excelTemplateFile.path);
+            if (outputMode === 'template') {
+                if (!excelTemplateFile?.path || !excelTemplateData) {
+                    setError('タイムカードをテンプレートに転記するには、Excelテンプレートファイルを指定してください。');
+                    return;
                 }
-            } else if (result.error) {
-                throw new Error(result.error);
+
+                // テンプレートからシート名リストを取得
+                const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
+                const targetSheetName = findMatchingSheetName(card.title.name, tempWb.SheetNames);
+
+                if (!targetSheetName) {
+                    setError(`テンプレートに氏名「${card.title.name}」に一致するシートが見つかりませんでした。`);
+                    return;
+                }
+
+                const pythonArgs = transformTimecardJsonForExcelHandler(card, excelTemplateFile.path, targetSheetName);    
+                            // window.electronAPI.runPythonScript の型定義を拡張するか、型アサーションを使用
+                const result = await (window.electronAPI as any).runPythonScript({
+                    args: pythonArgs,
+                });
+
+                if (result.success && result.message) {
+                    setUpdateStatus({ message: result.message, transient: true });
+                    // テンプレートに転記後、ファイルを開く
+                    if (excelTemplateFile?.path) {
+                        await window.electronAPI.openFile(excelTemplateFile.path);
+                    }
+                } else if (result.error) {
+                    throw new Error(result.error);
+                }
+            } else { // outputMode === 'new'
+                // 新規Excelファイル作成
+                const wb = XLSX.utils.book_new();
+                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
+                const ws_data = [
+                    ['期間', card.title.yearMonth],
+                    ['氏名', card.title.name],
+                    [], // 空行
+                    ['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤'] // ヘッダー
+                ];
+                // タイムカードデータを追加
+                card.days.forEach(day => {
+                    ws_data.push([
+                        day.date,
+                        day.dayOfWeek || '',
+                        day.morningStart || '',
+                        day.morningEnd || '',
+                        day.afternoonStart || '',
+                        day.afternoonEnd || '',
+                    ]);
+                });
+                const ws = XLSX.utils.aoa_to_sheet(ws_data);
+                XLSX.utils.book_append_sheet(wb, ws, sheetName);
+                const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const uint8FileData = new Uint8Array(fileData);
+                const fileName = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}.xlsx`.replace(/[\\/:*?"<>|]/g, '_') || 'Timecard.xlsx';
+                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, uint8FileData);
+                console.log('saveFile result:', savedFilePath);
+                if (savedFilePath && savedFilePath.path) {
+                    const openFileResult = await window.electronAPI.openFile(savedFilePath.path);
+                    console.log('openFile result:', openFileResult);
+                }
             }
             // Canceled case is handled implicitly
 
@@ -819,7 +828,7 @@ const App = () => {
             const fileNameBase = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}`.replace(/[\\/:*?"<>|]/g, '_') || 'Document';
 
             let fileData: Uint8Array;
-            let fileName: string;
+            let fileName: string = '';
 
             if (outputMode === 'template') {
                 if (!excelTemplateData || !templateSettings.dataStartCell) {
@@ -858,10 +867,11 @@ const App = () => {
                 const ws = XLSX.utils.aoa_to_sheet(ws_data);
                 XLSX.utils.book_append_sheet(wb, ws, sheetName);
                 fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-                fileName = `${fileNameBase}.xlsx`;
                 const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
+                console.log('saveFile result:', savedFilePath);
                 if (savedFilePath && savedFilePath.path) {
-                    await window.electronAPI.openFile(savedFilePath.path);
+                    const openFileResult = await window.electronAPI.openFile(savedFilePath.path);
+                    console.log('openFile result:', openFileResult);
                 }
             }
             setError(null);
@@ -895,73 +905,90 @@ const App = () => {
     try {
         // タイムカードデータの一括転記
         if (timecardData.length > 0) {
-            if (!excelTemplateFile?.path || !excelTemplateData) {
-                setError('タイムカードを転記するには、Excelテンプレートファイルを指定してください。');
-                return;
-            }
-
-            const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
-            const unmatchedNames: string[] = [];
-            const operations: { sheetName: string; data: (string | null)[][]; startRow: number; startCol: number; }[] = [];
-
-            timecardData.forEach(card => {
-                const targetSheetName = findMatchingSheetName(card.title.name, tempWb.SheetNames);
-                if (targetSheetName) {
-                    const dataToWrite = card.days.map(day => [
-                        day.morningStart || null,
-                        day.morningEnd || null,
-                        null, // G列はスキップ
-                        day.afternoonStart || null,
-                        day.afternoonEnd || null,
-                    ]);
-                    operations.push({
-                        sheetName: targetSheetName,
-                        data: dataToWrite,
-                        startRow: 6, // 6行目から
-                        startCol: 5, // E列から
-                    });
-                } else {
-                    unmatchedNames.push(card.title.name);
+            if (outputMode === 'template') {
+                if (!excelTemplateFile?.path || !excelTemplateData) {
+                    setError('タイムカードをテンプレートに転記するには、Excelテンプレートファイルを指定してください。');
+                    return;
                 }
-            });
 
-            if (operations.length > 0) {
-                const pythonArgs = {
-                    template_path: excelTemplateFile.path,
-                    operations: operations.map(op => ({
-                        sheet_name: op.sheetName,
-                        data: op.data,
-                        start_cell: `${String.fromCharCode(64 + op.startCol)}${op.startRow}` // E6のような文字列に変換
-                    }))
-                };
-                const result = await (window.electronAPI as any).runPythonScript({
-                    args: pythonArgs,
+                const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
+                const allOperations: any[] = [];
+                const unmatchedNames: string[] = [];
+
+                timecardData.forEach(card => {
+                    const targetSheetName = findMatchingSheetName(card.title.name, tempWb.SheetNames);
+                    if (targetSheetName) {
+                        // ここで修正した変換関数を使用
+                        const transformed = transformTimecardJsonForExcelHandler(card, excelTemplateFile.path, targetSheetName);
+                        allOperations.push(...transformed.operations);
+                    } else {
+                        unmatchedNames.push(card.title.name);
+                    }
                 });
 
-                if (result.success && result.message) {
-                    let message = result.message;
-                    if (unmatchedNames.length > 0) {
-                        message += ` (未転記: ${unmatchedNames.join(', ')})`;
+                if (allOperations.length > 0) {
+                    const pythonArgs = {
+                        template_path: excelTemplateFile.path,
+                        operations: allOperations
+                    };
+                    const result = await (window.electronAPI as any).runPythonScript({
+                        args: pythonArgs,
+                    });
+
+                    if (result.success && result.message) {
+                        let message = result.message;
+                        if (unmatchedNames.length > 0) {
+                            message += ` (未転記: ${unmatchedNames.join(', ')})`;
+                        }
+                        setUpdateStatus({ message, transient: true });
+                        // テンプレートに転記後、ファイルを開く
+                        if (excelTemplateFile?.path) {
+                            await window.electronAPI.openFile(excelTemplateFile.path);
+                        }
+                    } else if (result.error) {
+                        throw new Error(result.error);
                     }
-                    setUpdateStatus({ message, transient: true });
-                    // テンプレートに転記後、ファイルを開く
-                    if (excelTemplateFile?.path) {
-                        await window.electronAPI.openFile(excelTemplateFile.path);
-                    }
-                } else if (result.error) {
-                    throw new Error(result.error);
-                }
-                // Canceled case is handled implicitly by doing nothing
-            } else {
-                if (unmatchedNames.length > 0) {
-                    setError(`転記対象のデータが見つかりませんでした。テンプレートに一致するシート名がありませんでした: ${unmatchedNames.join(', ')}`);
                 } else {
-                    setError('転記対象のデータが見つかりませんでした。');
+                    if (unmatchedNames.length > 0) {
+                        setError(`転記対象のデータが見つかりませんでした。テンプレートに一致するシート名がありませんでした: ${unmatchedNames.join(', ')}`);
+                    } else {
+                        setError('転記対象のデータが見つかりませんでした。');
+                    }
+                }
+            } else { // outputMode === 'new'
+                // 新規Excelファイル作成 (この部分は変更なし)
+                const wb = XLSX.utils.book_new();
+                timecardData.forEach(card => {
+                    const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?\"<>|]/g, '').substring(0, 31);
+                    const ws_data = [
+                        ['期間', card.title.yearMonth],
+                        ['氏名', card.title.name],
+                        [], // 空行
+                        ['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤'] // ヘッダー
+                    ];
+                    card.days.forEach(day => {
+                        ws_data.push([
+                            day.date,
+                            day.dayOfWeek || '',
+                            day.morningStart || '',
+                            day.morningEnd || '',
+                            day.afternoonStart || '',
+                            day.afternoonEnd || '',
+                        ]);
+                    });
+                    const ws = XLSX.utils.aoa_to_sheet(ws_data);
+                    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+                });
+                const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const fileName = 'Timecards_All.xlsx';
+                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
+                if (savedFilePath && savedFilePath.path) {
+                    await window.electronAPI.openFile(savedFilePath.path);
                 }
             }
         }
 
-        // テーブルデータの一括保存
+        // テーブルデータの一括保存 (この部分は変更なし)
         if (tableData.length > 0) {
             if (outputMode === 'template') {
                 if (!excelTemplateData || !excelTemplateFile || !templateSettings.dataStartCell) {
@@ -998,8 +1025,7 @@ const App = () => {
                 }
                 
                 if (unmatchedNames.length > 0) {
-                    setError(`転記が完了しましたが、一部の氏名のシートが見つかりませんでした。
-未転記: ${unmatchedNames.join(', ')}`);
+                    setError(`転記が完了しましたが、一部の氏名のシートが見つかりませんでした。\n未転記: ${unmatchedNames.join(', ')}`);
                 } else {
                     setError(null);
                 }
@@ -1007,21 +1033,22 @@ const App = () => {
                 // 新規Excelファイル作成
                 const wb = XLSX.utils.book_new();
                 tableData.forEach(card => {
-                  const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
+                  const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?\"<>|]/g, '').substring(0, 31);
                   const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
                   const ws = XLSX.utils.aoa_to_sheet(ws_data);
                   XLSX.utils.book_append_sheet(wb, ws, sheetName);
                 });
                 const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const uint8FileData = new Uint8Array(fileData);
                 const fileName = 'Documents_All.xlsx';
-                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
+                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, uint8FileData);
                 if (savedFilePath && savedFilePath.path) {
                     await window.electronAPI.openFile(savedFilePath.path);
                 }
             }
         }
 
-        // テキストデータの一括保存
+        // テキストデータの一括保存 (この部分は変更なし)
         if (transcriptionData.length > 0) {
             for (const item of transcriptionData) {
                 const fileName = `${item.fileName.replace(/\.[^/.]+$/, "")}.txt`;
@@ -1074,7 +1101,18 @@ const App = () => {
                         <div className="flex items-center gap-4">
                             <input type="file" id="roster-upload" className="hidden" accept=".xlsx, .xls, .xlsm" onChange={handleRosterUpload} />
                             <label htmlFor="roster-upload" className="cursor-pointer rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">名簿ファイルを選択</label>
-                            {rosterFile && <span className="text-sm text-gray-700">{rosterFile.name} ({roster.length}名)</span>}
+                            {rosterFile && (
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm text-gray-700">{rosterFile.name} ({roster.length}名)</span>
+                                    <button
+                                        onClick={() => { setRosterFile(null); setRoster([]); setError(null); }}
+                                        className="p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700"
+                                        aria-label="名簿ファイルをクリア"
+                                    >
+                                        <CloseIcon className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            )}
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                              <div><label htmlFor="rosterSheetName" className="block text-sm font-medium leading-6 text-gray-900">シート名 (空欄で最初のシート)</label><input type="text" name="sheetName" id="rosterSheetName" value={rosterSettings.sheetName} onChange={handleRosterSettingsChange} className="block w-full rounded-md border-0 py-1.5 px-2 text-gray-900 bg-white shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6" placeholder="例: 社員一覧" /></div>
@@ -1113,7 +1151,18 @@ const App = () => {
                                         >
                                             ファイルを選択
                                         </button>
-                                        {excelTemplateFile && <span className="text-sm text-gray-700">{excelTemplateFile.name}</span>}
+                                        {excelTemplateFile && (
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm text-gray-700">{excelTemplateFile.name}</span>
+                                                <button
+                                                    onClick={() => { setExcelTemplateFile(null); setExcelTemplateData(null); setError(null); }}
+                                                    className="p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700"
+                                                    aria-label="テンプレートファイルをクリア"
+                                                >
+                                                    <CloseIcon className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
@@ -1231,7 +1280,7 @@ const App = () => {
                                 <DataTable 
                                     cardIndex={index} 
                                     headers={['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']}
-                                    data={item.days.map(d => [d.date, d.dayOfWeek, d.morningStart || '', d.morningEnd || '', d.afternoonStart || '', d.afternoonEnd || ''])}
+                                    data={item.days.map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', d.afternoonStart || '', d.afternoonEnd || ''])}
                                     onDataChange={handleDataChange} 
                                 />
                             </>

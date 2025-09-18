@@ -4,14 +4,14 @@ const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
-const { GoogleGenerativeAI } = await import('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const { spawn } = require('child_process');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 
 // --- Environment and Configuration ---
 require('dotenv').config({ path: path.join(app.getAppPath(), '.env') });
-const isDev = process.env.NODE_ENV !== 'production';
+const isDev = !app.isPackaged;
 
 // Configure logging
 autoUpdater.logger = log;
@@ -141,8 +141,9 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
   if (!apiKey) {
     throw new Error('APIキーが.envファイルに設定されていません。');
   }
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+  const genAI = new GoogleGenAI({ apiKey: apiKey });
+
 
   const generationConfig = {
     temperature: 0.2,
@@ -182,12 +183,32 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
         },
       };
 
-      const result = await model.generateContent([prompt, imagePart], generationConfig);
-      const response = result.response;
-      const jsonText = response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+      log.info('genAI object:', genAI);
+      log.info('genAI.models object:', genAI.models);
+      log.info('Before generateContent call');
+      log.info('generateContent arguments:', { model: 'gemini-2.5-flash', contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }], generationConfig: generationConfig });
+      const result = await genAI.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }],
+        generationConfig: generationConfig,
+      });
+      log.info('After generateContent call. Raw result:', result);
+      log.info('Result has response property:', result && result.response !== undefined);
+      log.info('Type of result.response:', typeof (result && result.response));
+      const jsonText = result.candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
       const data = JSON.parse(jsonText);
       
       // Add original filename to transcription type
+      if (!data.type) {
+        if (data.days && Array.isArray(data.days)) {
+          data.type = 'timecard';
+        } else if (data.headers && Array.isArray(data.headers) && data.data && Array.isArray(data.data)) {
+          data.type = 'table';
+        } else {
+          data.type = 'transcription';
+        }
+      }
+
       if (data.type === 'transcription') {
         data.fileName = page.name;
       }
@@ -195,6 +216,7 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
 
     } catch (error) {
       log.error('Gemini OCR Error:', error);
+      console.error('Gemini OCR Error in main process:', error);
       throw new Error(`AI処理中にエラーが発生しました: ${error.message}`);
     }
   }
@@ -277,10 +299,23 @@ ipcMain.handle('run-python-script', async (event, { args }) => {
         return resolve({ success: false, error: '一時ファイルの作成に失敗しました。' });
       }
 
-      const pythonExecutable = isDev ? 'python' : scriptPath;
-      const scriptArgs = isDev ? [scriptPath, tempFilePath] : [tempFilePath];
+      log.info(`Determined scriptPath: ${scriptPath}`);
+      let command;
+      let argsForSpawn;
+
+      if (isDev) {
+        command = 'python';
+        argsForSpawn = [scriptPath, tempFilePath];
+      } else {
+        command = scriptPath; // scriptPath is the path to the .exe
+        argsForSpawn = [tempFilePath];
+      }
       
-      const pyProcess = spawn(pythonExecutable, scriptArgs);
+      log.info(`Python command: ${command}`);
+      log.info(`Python arguments: ${argsForSpawn.join(' ')}`);
+      log.info(`Is development mode: ${isDev}`);
+
+      const pyProcess = spawn(command, argsForSpawn);
 
       let stdout = '';
       let stderr = '';

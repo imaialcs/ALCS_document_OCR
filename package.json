@@ -41,7 +41,8 @@
   "build": {
     "asar": true,
     "asarUnpack": [
-      "dist/excel_handler/**/*"
+      "dist/excel_handler/**/*",
+      "node_modules/@google/genai/**/*"
     ],
     "appId": "com.alcs.documentocr",
     "productName": "ALCS文書OCR",

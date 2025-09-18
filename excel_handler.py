@@ -3,6 +3,57 @@ import json
 import os
 import re
 import datetime
+import traceback
+
+# Add current directory to sys.path for PyInstaller compatibility
+if getattr(sys, 'frozen', False):
+    sys.path.append(os.path.dirname(sys.executable))
+else:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# Define log file path at the very beginning, using the executable's directory for robustness
+# This ensures the log file is created next to the excel_handler.exe
+if getattr(sys, 'frozen', False):
+    # Running in a bundle (e.g., PyInstaller)
+    LOG_FILE_PATH = os.path.join(os.path.dirname(sys.executable), "excel_handler_error.log")
+else:
+    # Running in a normal Python environment
+    LOG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "excel_handler_error.log")
+
+# Redirect stdout and stderr to the log file
+try:
+    sys.stdout = open(LOG_FILE_PATH, "a", encoding="utf-8")
+    sys.stderr = open(LOG_FILE_PATH, "a", encoding="utf-8")
+except Exception as e:
+    # Fallback if redirection fails (e.g., permission issues)
+    pass # Cannot log to file if file opening fails
+
+def log_error(e, context=""):
+    try:
+        with open(LOG_FILE_PATH, "a", encoding="utf-8") as log_file:
+            log_file.write(f"[{datetime.datetime.now()}] Error {context}: {e}\n")
+            log_file.write(traceback.format_exc())
+            log_file.write("-" * 50 + "\n")
+    except Exception as log_e:
+        # Fallback to original stderr if logging to file fails
+        sys.__stderr__.write(f"[{datetime.datetime.now()}] CRITICAL ERROR: Failed to write to log file: {log_e}\n")
+        sys.__stderr__.write(f"Original Error {context}: {e}\n")
+        traceback.print_exc(file=sys.__stderr__)
+        sys.__stderr__.write("-" * 50 + "\n")
+
+# Set up a global exception handler to catch unhandled exceptions
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    log_error(exc_value, f"Unhandled Exception: {exc_type.__name__}")
+    sys.__excepthook__(exc_type, exc_value, exc_traceback) # Call default handler
+
+sys.excepthook = global_exception_handler
+
+# Debugging: Log script start and environment info
+log_error("Script started.", "DEBUG")
+log_error(f"Python version: {sys.version}", "DEBUG")
+log_error(f"Current working directory: {os.getcwd()}", "DEBUG")
+log_error(f"Script path: {os.path.abspath(__file__)}", "DEBUG")
+log_error(f"Log file path: {LOG_FILE_PATH}", "DEBUG")
 
 try:
     import xlwings as xw
@@ -10,43 +61,62 @@ try:
     XLWINGS_AVAILABLE = True
 except ImportError:
     XLWINGS_AVAILABLE = False
+except Exception as e:
+    log_error(e, "while importing xlwings")
+    XLWINGS_AVAILABLE = False
 
 try:
     import openpyxl
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
+except Exception as e:
+    log_error(e, "while importing openpyxl")
+    OPENPYXL_AVAILABLE = False
 
 def cell_to_row_col(cell_address):
-    """Converts an Excel cell address like 'A1' or 'BC23' to (row, col) tuple."""
     match = re.match(r"([A-Z]+)(\d+)", cell_address.upper())
     if not match:
         raise ValueError(f"Invalid cell address format: {cell_address}")
-    col_name = match.group(1)
-    row_num = int(match.group(2))
+    col_name, row_str = match.groups()
+    row_num = int(row_str)
     col_num = 0
     for char in col_name:
         col_num = col_num * 26 + (ord(char) - ord('A') + 1)
     return row_num, col_num
 
-def find_sheet_safely(book_sheets, target_sheet_name):
-    """Finds a sheet by name, allowing for partial matches."""
-    # Exact match first
-    for sheet in book_sheets:
-        if sheet.name == target_sheet_name:
-            return sheet
-    # Partial match (contains)
-    for sheet in book_sheets:
-        if target_sheet_name in sheet.name:
-            return sheet
-    # Partial match (is contained in)
-    for sheet in book_sheets:
-        if sheet.name in target_sheet_name:
-            return sheet
-    return None
+def find_sheet_safely(book_or_sheets, target_sheet_name, is_openpyxl=False):
+    if is_openpyxl:
+        # For openpyxl, book_or_sheets is the workbook object
+        # Try exact match first
+        if target_sheet_name in book_or_sheets.sheetnames:
+            return book_or_sheets[target_sheet_name]
+        # Try partial match (contains)
+        for sheet_name in book_or_sheets.sheetnames:
+            if target_sheet_name in sheet_name:
+                return book_or_sheets[sheet_name]
+        # Try partial match (is contained in)
+        for sheet_name in book_or_sheets.sheetnames:
+            if sheet_name in target_sheet_name:
+                return book_or_sheets[sheet_name]
+        return None
+    else:
+        # For xlwings, book_or_sheets is wb.sheets collection
+        # Exact match first
+        for sheet in book_or_sheets:
+            if sheet.name == target_sheet_name:
+                return sheet
+        # Partial match (contains)
+        for sheet in book_or_sheets:
+            if target_sheet_name in sheet.name:
+                return sheet
+        # Partial match (is contained in)
+        for sheet in book_or_sheets:
+            if sheet.name in target_sheet_name:
+                return sheet
+        return None
 
 def process_with_xlwings(template_path, operations):
-    """Processes Excel operations using xlwings."""
     excel_app = xw.App(visible=False)
     wb = None
     try:
@@ -58,18 +128,16 @@ def process_with_xlwings(template_path, operations):
             start_cell = op.get("start_cell")
 
             if not all([sheet_name, data, start_cell]):
-                print(f"Warning: Skipping invalid operation: {op}")
                 continue
 
-            sheet = find_sheet_safely(wb.sheets, sheet_name)
+            sheet = find_sheet_safely(wb.sheets, sheet_name, is_openpyxl=False)
             if not sheet:
-                print(f"Warning: Sheet '{sheet_name}' not found. Skipping operation.")
                 continue
 
             try:
                 sheet.api.Unprotect()
             except Exception:
-                pass  # Ignore if not protected or fails
+                pass
 
             start_row, start_col = cell_to_row_col(start_cell)
             sheet.range((start_row, start_col)).value = data
@@ -84,10 +152,14 @@ def process_with_xlwings(template_path, operations):
         excel_app.quit()
 
 def process_with_openpyxl(template_path, operations):
-    """Processes Excel operations using openpyxl."""
     is_xlsm = template_path.lower().endswith('.xlsm')
-    wb = openpyxl.load_workbook(template_path, keep_vba=is_xlsm)
-    
+    wb = None
+    try:
+        wb = openpyxl.load_workbook(template_path, keep_vba=is_xlsm)
+    except Exception as e:
+        log_error(e, f"while loading workbook {template_path} with openpyxl")
+        raise
+
     processed_count = 0
     for op in operations:
         sheet_name = op.get("sheet_name")
@@ -95,41 +167,50 @@ def process_with_openpyxl(template_path, operations):
         start_cell = op.get("start_cell")
 
         if not all([sheet_name, data, start_cell]):
-            print(f"Warning: Skipping invalid operation: {op}")
             continue
 
-        sheet = find_sheet_safely(wb, sheet_name)
+        sheet = find_sheet_safely(wb, sheet_name, is_openpyxl=True)
         if not sheet:
-            print(f"Warning: Sheet '{sheet_name}' not found. Skipping operation.")
+            log_error(f"Sheet '{sheet_name}' not found in workbook.", "sheet not found")
             continue
-            
+        
+        # openpyxlでシート保護を解除
+        if sheet.protection.sheet:
+            try:
+                sheet.protection.disable()
+            except Exception as e:
+                log_error(e, f"while disabling sheet protection for {sheet_name} with openpyxl")
+                # 保護解除に失敗しても処理を続行
+                
         start_row, start_col = cell_to_row_col(start_cell)
-        for i, row_data in enumerate(data):
-            for j, cell_value in enumerate(row_data):
-                # openpyxl is 1-based, and so is our calculation
-                sheet.cell(row=start_row + i, column=start_col + j, value=cell_value)
-        processed_count += 1
+        try:
+            for i, row_data in enumerate(data):
+                for j, cell_value in enumerate(row_data):
+                    sheet.cell(row=start_row + i, column=start_col + j, value=cell_value)
+            processed_count += 1
+        except Exception as e:
+            log_error(e, f"while writing data to sheet {sheet_name} at {start_cell} with openpyxl")
+            raise
 
     if processed_count > 0:
-        wb.save(template_path)
+        try:
+            wb.save(template_path)
+        except Exception as e:
+            log_error(e, f"while saving workbook {template_path} with openpyxl")
+            raise
     return {"success": True, "message": f"{processed_count}件の操作をExcelファイルに正常に転記しました。"}
-
-def log_error(e, context=""):
-    """Logs an error to a file."""
-    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "excel_handler_error.log")
-    with open(log_file_path, "a", encoding="utf-8") as log_file:
-        import traceback
-        log_file.write(f"[{datetime.datetime.now()}] Error {context}: {e}\n")
-        log_file.write(traceback.format_exc())
-        log_file.write("-" * 50 + "\n")
 
 if __name__ == "__main__":
     json_file_path = ""
     try:
+        log_error(f"sys.argv: {sys.argv}", "DEBUG") # Log sys.argv
         if len(sys.argv) < 2:
             raise ValueError("No input JSON file path provided.")
         
         json_file_path = sys.argv[1]
+        log_error(f"JSON file path: {json_file_path}", "DEBUG") # Log JSON file path
+        
+        # Simplified and more robust JSON loading
         with open(json_file_path, 'r', encoding='utf-8') as f:
             input_data = json.load(f)
 
@@ -139,18 +220,20 @@ if __name__ == "__main__":
         if not template_path or not isinstance(operations, list):
             raise ValueError("'template_path' and a list of 'operations' are required.")
 
+        if not os.path.exists(template_path):
+            raise FileNotFoundError(f"Template file not found at: {template_path}")
+
         result = {}
-        # Prefer xlwings for its robustness with live Excel instances
         if XLWINGS_AVAILABLE:
             try:
                 result = process_with_xlwings(template_path, operations)
             except Exception as e:
                 log_error(e, "while running xlwings")
                 if OPENPYXL_AVAILABLE:
-                    print("Info: xlwings failed. Falling back to openpyxl.")
+                    sys.stderr.write("Info: xlwings failed, falling back to openpyxl.\n")
                     result = process_with_openpyxl(template_path, operations)
                 else:
-                    raise Exception("xlwings failed and openpyxl is not available.")
+                    raise
         elif OPENPYXL_AVAILABLE:
             result = process_with_openpyxl(template_path, operations)
         else:
@@ -160,10 +243,9 @@ if __name__ == "__main__":
 
     except Exception as e:
         log_error(e, "in main execution block")
-        print(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False))
+        sys.stderr.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False) + "\n")
         sys.exit(1)
     finally:
-        # Clean up the temporary file
         if json_file_path and os.path.exists(json_file_path):
             try:
                 os.remove(json_file_path)

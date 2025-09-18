@@ -17,7 +17,7 @@ export interface ProcessedText {
 
 export interface TimecardDay {
   date: string;
-  dayOfWeek: string;
+  dayOfWeek: string | null;
   morningStart: string | null;
   morningEnd: string | null;
   afternoonStart: string | null;
