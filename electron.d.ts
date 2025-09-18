@@ -30,8 +30,43 @@ interface Window {
      * Opens a save dialog and writes the provided data to the selected file.
      * @param options The options for the save dialog, including the default file path.
      * @param data The file content as a Uint8Array.
-     * @returns A promise that resolves when the file is saved.
+     * @returns A promise that resolves with the result of the save operation.
      */
-    saveFile: (options: { defaultPath: string }, data: Uint8Array) => Promise<void>;
+    saveFile: (options: { defaultPath: string }, data: Uint8Array) => Promise<{ success: boolean; canceled?: boolean; path?: string }>;
+
+    /**
+     * Opens a file in the default application.
+     * @param filePath The path to the file to open.
+     * @returns A promise that resolves when the open command is issued.
+     */
+    openFile: (filePath: string) => Promise<void>;
+    
+    /**
+     * Writes data to an Excel template file.
+     * @param params The parameters for the write operation.
+     * @returns A promise that resolves with the result of the operation.
+     */
+    writeToExcel: (params: { 
+      templatePath: string; 
+      operations: { 
+        sheetName: string; 
+        data: (string | null)[][]; 
+        startRow: number; 
+        startCol: number; 
+      }[]; 
+    }) => Promise<{ success: boolean; path?: string; error?: string }>;
+
+    /**
+     * Opens a dialog to select a template file.
+     * @returns A promise that resolves with the file details.
+     */
+    openTemplateFile: () => Promise<{ 
+      success: boolean; 
+      canceled?: boolean; 
+      path?: string; 
+      data?: Buffer; 
+      name?: string; 
+      error?: string; 
+    }>;
   };
 }

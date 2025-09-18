@@ -9,6 +9,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // --- File Save API ---
   saveFile: (options, data) => ipcRenderer.invoke('save-file', options, data),
 
+  // --- Excel Write API ---
+  writeToExcel: (params) => ipcRenderer.invoke('write-excel', params),
+
+  // --- Python Script Execution API ---
+  runPythonScript: (options) => ipcRenderer.invoke('run-python-script', options),
+
+  // --- Template File Open API ---
+  openTemplateFile: () => ipcRenderer.invoke('open-template-file'),
+
+  // --- File Open API ---
+  openFile: (filePath) => ipcRenderer.invoke('open-file', filePath),
+
   // --- Auto-update API ---
   onUpdateStatus: (callback) => {
     // We wrap the callback to ensure we are only passing the expected arguments.

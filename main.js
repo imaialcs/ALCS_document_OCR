@@ -1,355 +1,321 @@
 // main.js
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
-const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = await import('@google/generative-ai');
+const { spawn } = require('child_process');
+const os = require('os');
+const { v4: uuidv4 } = require('uuid');
 
-// Gemini OCR処理を実行するためのIPCハンドラ
+// --- Environment and Configuration ---
+require('dotenv').config({ path: path.join(app.getAppPath(), '.env') });
+const isDev = process.env.NODE_ENV !== 'production';
+
+// Configure logging
+autoUpdater.logger = log;
+log.transports.file.level = 'info';
+log.info('App starting...');
+
+let mainWindow;
+
+// --- Main Window Creation ---
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const startUrl = isDev
+    ? 'http://localhost:5173'
+    : `file://${path.join(__dirname, 'dist', 'index.html')}`;
+  
+  mainWindow.loadURL(startUrl);
+
+  if (isDev) {
+    mainWindow.webContents.openDevTools();
+  }
+
+  mainWindow.on('closed', () => mainWindow = null);
+}
+
+// --- Application Menu ---
+const createMenu = () => {
+  const template = [
+    {
+      label: 'ファイル',
+      submenu: [
+        { role: 'quit', label: '終了' }
+      ]
+    },
+    {
+      label: '表示',
+      submenu: [
+        { role: 'reload', label: 'リロード' },
+        { role: 'forceReload', label: '強制的にリロード' },
+        { role: 'toggleDevTools', label: '開発者ツールを表示' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: '実際のサイズ' },
+        { role: 'zoomIn', label: '拡大' },
+        { role: 'zoomOut', label: '縮小' },
+      ]
+    },
+    {
+      label: 'ヘルプ',
+      submenu: [
+        {
+          label: 'バージョン情報',
+          click: () => {
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: 'バージョン情報',
+              message: `ALCS文書OCR\nバージョン: ${app.getVersion()}\nElectron: ${process.versions.electron}\nNode: ${process.versions.node}`,
+            });
+          }
+        },
+        {
+          label: '更新を確認',
+          click: () => {
+            autoUpdater.checkForUpdatesAndNotify();
+          }
+        }
+      ]
+    }
+  ];
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+};
+
+// --- App Lifecycle ---
+app.on('ready', () => {
+  createWindow();
+  createMenu();
+  // Check for updates 2 seconds after app is ready
+  setTimeout(() => autoUpdater.checkForUpdatesAndNotify(), 2000);
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('activate', () => {
+  if (mainWindow === null) {
+    createWindow();
+  }
+});
+
+// --- Auto-updater Event Handlers ---
+const sendUpdateStatus = (status) => {
+  log.info(status);
+  if (mainWindow) {
+    mainWindow.webContents.send('update-status', status);
+  }
+};
+
+autoUpdater.on('checking-for-update', () => sendUpdateStatus({ message: '更新を確認中...' }));
+autoUpdater.on('update-available', (info) => sendUpdateStatus({ message: `新しいバージョン (${info.version}) が利用可能です。ダウンロードを開始します。` }));
+autoUpdater.on('update-not-available', () => sendUpdateStatus({ message: 'お使いのバージョンは最新です。', transient: true }));
+autoUpdater.on('error', (err) => sendUpdateStatus({ message: `更新エラー: ${err.message}` }));
+autoUpdater.on('download-progress', (progressObj) => {
+  sendUpdateStatus({ message: `ダウンロード中 ${Math.floor(progressObj.percent)}% (${Math.floor(progressObj.bytesPerSecond / 1024)} KB/s)` });
+});
+autoUpdater.on('update-downloaded', () => sendUpdateStatus({ message: 'アップデートの準備ができました。アプリケーションを再起動してください。', ready: true }));
+
+ipcMain.on('restart-app', () => {
+  autoUpdater.quitAndInstall();
+});
+
+// --- IPC Handlers ---
+
+// Gemini OCR
 ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) {
-    throw new Error("APIキーが見つかりません。'.env'ファイルで'API_KEY'が設定されているか確認してください。");
+    throw new Error('APIキーが.envファイルに設定されていません。');
   }
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-  const ai = new GoogleGenAI({ apiKey });
-  const allProcessedData = [];
+  const generationConfig = {
+    temperature: 0.2,
+    topK: 32,
+    topP: 1,
+    maxOutputTokens: 8192,
+    responseMimeType: 'application/json',
+  };
+
+  const results = [];
 
   for (const page of pages) {
-    const filePart = {
-      inlineData: {
-        data: page.base64,
-        mimeType: page.mimeType,
-      },
-    };
-
-    const prompt = `あなたは、紙の文書をデジタル化する超高精度なOCRエキスパートです。与えられた画像からテキストを正確に抽出し、指示されたJSON形式で構造化する任務を担います。いかなる場合でも、指定されたJSONスキーマに100%準拠した有効なJSON配列のみを出力してください。
-
-# 思考プロセス
-1.  まず、画像全体を注意深く観察し、文書のタイプを「タイムカード」「一般的なテーブル」「文字起こし」のいずれかであるか判断します。
-    - **タイムカード**: 「出勤」「退勤」「始業」「終業」などのキーワードや、日付と時刻のペアが並んだ典型的な勤怠管理票のレイアウトを持つもの。
-    - **一般的なテーブル**: タイムカード以外の、明確な行と列を持つ構造化された帳票（請求書、通帳など）。
-    - **文字起こし**: 手紙、メモ、記事など、自由な形式の文章。
-2.  判断したタイプに応じて、以下の各セクションのルールに従い、厳格にJSONオブジェクトを生成します。
-
-# 全体ルール
-- **最重要**: 出力は、必ず指定されたJSONスキーマに準拠したJSON配列 **のみ** としてください。説明、挨拶、マークダウン(\`json ... \`)は絶対に含めないでください。
-- 文書が読み取れない、または内容が空の場合でも、必ず空の配列  \`[]\`  を返してください。エラーメッセージや説明はJSONに含めてはいけません。
-- 画像内に複数の独立した文書がある場合は、それぞれをJSON配列内の個別のオブジェクトとして処理してください。
-- ハンコや印鑑の文字も、読み取れる場合はテキストとして転記してください。
-
----
-
-# 1. タイムカード形式の場合
-- **\`type\`**: 必ず \`"timecard"\` とします。
-- **\`title\`**:
-    - **\`yearMonth\`**: 文書全体の年月（例: 「2025年 8月」）を抽出します。見つからなければ空文字列 \`""\` とします。
-    - **\`name\`**: 氏名を抽出します。見つからなければ空文字列 \`""\` とします。
-- **\`days\`**: 日ごとの勤怠データをオブジェクトの配列として格納します。
-    - **\`date\`**: 日付 (例: "1", "2")。
-    - **\`dayOfWeek\`**: 曜日 (例: "月", "火")。
-    - **\`morningStart\`**: 午前の始業時刻。印字がなければ \`null\`。
-    - **\`morningEnd\`**: 午前の終業時刻。印字がなければ \`null\`。
-    - **\`afternoonStart\`**: 午後の始業時刻。印字がなければ \`null\`。
-    - **\`afternoonEnd\`**: 午後の終業時刻。印字がなければ \`null\`。
-- **【重要】時刻の解釈**:
-    - タイムカードの時刻は、左から順番に「午前の始業」「午前の終了」「午後の始業」「午後の終了」に対応します。
-    - **午前勤務のみ（2打刻）**: 最初の2つの時刻を \`morningStart\` と \`morningEnd\` に割り当て、\`afternoonStart\` と \`afternoonEnd\` は \`null\` にします。
-    - **午後勤務のみ（2打刻）**: 最初の2つの時刻を \`afternoonStart\` と \`afternoonEnd\` に割り当て、\`morningStart\` と \`morningEnd\` は \`null\` にします。（※この判断は難しいですが、時刻が明らかに午後（例: 13:00以降）から始まっている場合に適用してください）
-    - **4打刻**: 4つの時刻を順番に割り当てます。
-    - 印字されていない時刻や空白のセルは、必ず \`null\` を設定してください。
-
----
-**タイムカード形式の出力例:**
-\`\`\`json
-[
-  {
-    "type": "timecard",
-    "title": {
-      "yearMonth": "2025年 8月",
-      "name": "石塚 萌"
-    },
-    "days": [
-      {
-        "date": "1",
-        "dayOfWeek": "月",
-        "morningStart": "09:02",
-        "morningEnd": "12:05",
-        "afternoonStart": "13:01",
-        "afternoonEnd": "18:08"
-      },
-      {
-        "date": "2",
-        "dayOfWeek": "火",
-        "morningStart": "09:05",
-        "morningEnd": "12:00",
-        "afternoonStart": null,
-        "afternoonEnd": null
-      }
-    ]
-  }
-]
-\`\`\`
----
-
-# 2. 一般的なテーブル形式の場合
-- **\`type\`**: 必ず \`"table"\` とします。
-- **\`title\`**:
-    - **\`yearMonth\`**: 文書全体の年月を抽出します。見つからなければ \`""\`。
-    - **\`name\`**: 氏名や件名など、文書の主題を抽出します。見つからなければ \`""\`。
-- **\`headers\`**: データの列ヘッダーを文字列の配列として抽出します。
-- **\`data\`**:
-    - 各データ行を、文字列の配列に変換します。
-    - **見たままを転記**: 文字、数字、記号を一切変更せず、画像に表示されている通りに転記します。
-    - **空白セル**: 空白に見えるセルは、空文字列 \`""\` で表現します。
-    - **列数の一致**: 各データ行の要素数は、必ず \`headers\` 配列の要素数と一致させてください。
-
----
-**一般的なテーブル形式の出力例:**
-\`\`\`json
-[
-  {
-    "type": "table",
-    "title": {
-      "yearMonth": "2025年 8月",
-      "name": "請求書"
-    },
-    "headers": ["日付", "品目", "単価", "数量", "金額"],
-    "data": [
-      ["8/1", "商品A", "1000", "2", "2000"],
-      ["8/3", "商品B", "1500", "1", "1500"]
-    ]
-  }
-]
-\`\`\`
----
-
-# 3. 文字起こし形式の場合
-- **\`type\`**: 必ず \`"transcription"\` とします。
-- **\`fileName\`**: この文書のファイル名です。常に \`'${page.name}'\` を設定してください。
-- **\`content\`**: 文書内のすべてのテキストを、改行や段落も含めて一つの文字列として書き起こします。
-
----
-**文字起こし形式の出力例:**
-\`\`\`json
-[
-  {
-    "type": "transcription",
-    "fileName": "memo.jpg",
-    "content": "来週の会議について\\n\\n日時: 9月16日(火) 10:00~\\n場所: 第3会議室"
-  }
-]
-\`\`\`
----
-
-# 最終確認
-- 出力は有効なJSON配列ですか？
-- 判断したタイプに応じた正しいスキーマを使用していますか？
-- 説明や余分なテキストは含まれていませんか？
-
-これらの指示を厳格に守り、最高の精度でOCR処理を実行してください。
-`;
-
-    const textPart = { text: prompt };
-
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-pro",
-            contents: { parts: [filePart, textPart] },
-        });
+      const prompt = `
+以下の画像から情報を抽出し、JSON形式で出力してください。
+画像が勤怠管理表やタイムカードの場合、以下のtimecard形式で出力してください。
+- title: { yearMonth: "YYYY年MM月", name: "氏名" }
+- days: [{ date: "D", dayOfWeek: "ddd", morningStart: "HH:mm", morningEnd: "HH:mm", afternoonStart: "HH:mm", afternoonEnd: "HH:mm" }]
+- morning/afternoonの時間は、出勤・退勤のペアがなければnullにしてください。
 
-        if (!response.text) {
-            console.error("APIからの応答にテキストデータが含まれていませんでした。");
-            continue;
-        }
+画像が請求書や明細書などの表形式データの場合、以下のtable形式で出力してください。
+- title: { yearMonth: "YYYY年MM月", name: "件名や宛名" }
+- headers: ["ヘッダー1", "ヘッダー2", ...]
+- data: [["行1セル1", "行1セル2", ...], ["行2セル1", "行2セル2", ...]]
 
-        let jsonString = response.text.trim();
-        
-        const arrayStart = jsonString.indexOf('[');
-        const arrayEnd = jsonString.lastIndexOf(']');
-        
-        if (arrayStart !== -1 && arrayEnd !== -1) {
-          jsonString = jsonString.substring(arrayStart, arrayEnd + 1);
-        } else {
-          const objectStart = jsonString.indexOf('{');
-          const objectEnd = jsonString.lastIndexOf('}');
-          if (objectStart !== -1 && objectEnd !== -1) {
-              jsonString = jsonString.substring(objectStart, objectEnd + 1);
-          }
-        }
+上記いずれにも該当しない、または判断が難しい場合は、画像の内容を単純に文字起こしし、以下のtranscription形式で出力してください。
+- type: "transcription"
+- fileName: "元のファイル名"
+- content: "文字起こし結果"
 
-        try {
-          const parsedData = JSON.parse(jsonString);
-          if (Array.isArray(parsedData)) {
-              const isValid = parsedData.every(item =>
-                  (item.type === 'table' && 'headers' in item && 'data' in item) ||
-                  (item.type === 'transcription' && 'content' in item) ||
-                  (item.type === 'timecard' && 'days' in item) // タイムカード形式の検証を追加
-              );
-              if (isValid) {
-                  allProcessedData.push(...parsedData);
-              } else {
-                // データ構造が一致しない場合でも、とりあえずフロントに送ってデバッグしやすくする
-                console.warn("API returned data that did not fully match structure for a page:", parsedData);
-                allProcessedData.push(...parsedData);
-              }
-          } else {
-            console.warn("API returned a non-array response for a page:", parsedData);
-          }
-        } catch (e) {
-          console.error("Failed to parse JSON response for a page:", e);
-          console.error("Received response string for page:", jsonString);
-        }
-    } catch (apiError) {
-        console.error("Gemini API call failed for a page:", apiError);
-        throw new Error(`Gemini APIの呼び出しに失敗しました: ${apiError.message}`);
+氏名や件名が読み取れない場合は、"不明"としてください。
+`;
+      const imagePart = {
+        inlineData: {
+          data: page.base64,
+          mimeType: page.mimeType,
+        },
+      };
+
+      const result = await model.generateContent([prompt, imagePart], generationConfig);
+      const response = result.response;
+      const jsonText = response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+      const data = JSON.parse(jsonText);
+      
+      // Add original filename to transcription type
+      if (data.type === 'transcription') {
+        data.fileName = page.name;
+      }
+      results.push(data);
+
+    } catch (error) {
+      log.error('Gemini OCR Error:', error);
+      throw new Error(`AI処理中にエラーが発生しました: ${error.message}`);
     }
   }
-  return allProcessedData;
+  return results;
 });
 
-// ファイル保存ダイアログを表示してファイルを保存するためのIPCハンドラ
+// Save File
 ipcMain.handle('save-file', async (event, options, data) => {
-  const { defaultPath } = options;
-  const focusedWindow = BrowserWindow.fromWebContents(event.sender);
-
-  if (!focusedWindow) {
-    return { success: false, error: 'Could not find the browser window.' };
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, options);
+  if (canceled || !filePath) {
+    return { success: false, canceled: true };
   }
-
   try {
-    const { canceled, filePath } = await dialog.showSaveDialog(focusedWindow, {
-      defaultPath: defaultPath,
-    });
-
-    if (canceled || !filePath) {
-      return { success: false, canceled: true };
-    }
-
-    fs.writeFileSync(filePath, Buffer.from(data));
+    await fs.promises.writeFile(filePath, data);
     return { success: true, path: filePath };
   } catch (error) {
-    console.error('Failed to save file:', error);
+    log.error('File Save Error:', error);
     return { success: false, error: error.message };
   }
 });
 
-// メニューテンプレートを定義
-const template = [
-  {
-    label: 'ファイル',
-    submenu: [
-      {
-        label: '終了',
-        role: 'quit'
-      }
-    ]
-  },
-  {
-    label: '編集',
-    submenu: [
-      {
-        label: '元に戻す',
-        role: 'undo'
-      },
-      {
-        label: 'やり直す',
-        role: 'redo'
-      },
-      { type: 'separator' },
-      {
-        label: '切り取り',
-        role: 'cut'
-      },
-      {
-        label: 'コピー',
-        role: 'copy'
-      },
-      {
-        label: '貼り付け',
-        role: 'paste'
-      },
-      {
-        label: 'すべて選択',
-        role: 'selectAll'
-      }
-    ]
-  },
-  {
-    label: '表示',
-    submenu: [
-      {
-        label: '拡大',
-        role: 'zoomIn'
-      },
-      {
-        label: '縮小',
-        role: 'zoomOut'
-      },
-      {
-        label: '拡大率のリセット',
-        role: 'resetZoom'
-      },
-      { type: 'separator' },
-      {
-        label: '全画面表示',
-        role: 'togglefullscreen'
-      }
-    ]
-  },
-  {
-    label: 'ヘルプ',
-    submenu: [
-      {
-        label: 'バージョン情報',
-        click: async () => {
-          const { dialog } = require('electron');
-          await dialog.showMessageBox({
-            title: 'バージョン情報',
-            message: '文書OCR',
-            detail: `バージョン: ${app.getVersion()}\\n© 2025 ALCS`
-          });
-        }
-      }
-    ]
+// Open Template File
+ipcMain.handle('open-template-file', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: [{ name: 'Excelファイル', extensions: ['xlsx', 'xlsm', 'xls'] }],
+  });
+  if (canceled || filePaths.length === 0) {
+    return { success: false, canceled: true };
   }
-];
-
-function createWindow() {
-  const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    icon: path.join(__dirname, 'icon.ico'),
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-
-  // メニューを設定
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
-
-  mainWindow.loadFile('dist/index.html');
-}
-
-app.whenReady().then(() => {
-  createWindow();
-
-  // 自動更新の確認
-  const { autoUpdater } = require('electron-updater');
-  autoUpdater.logger = log;
-  autoUpdater.logger.transports.file.level = 'info';
-  log.info('App starting...');
-  autoUpdater.checkForUpdatesAndNotify();
-
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+  const filePath = filePaths[0];
+  try {
+    const data = await fs.promises.readFile(filePath);
+    return { success: true, path: filePath, name: path.basename(filePath), data };
+  } catch (error) {
+    log.error('Template Open Error:', error);
+    return { success: false, error: error.message };
+  }
 });
 
-app.on('window-all-closed', function () {
-  if (process.platform !== 'darwin') app.quit();
+// Open File in Shell
+ipcMain.handle('open-file', async (event, filePath) => {
+  try {
+    await shell.openPath(filePath);
+    return { success: true };
+  } catch (error) {
+    log.error('File Open Error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Run Python Script
+ipcMain.handle('run-python-script', async (event, { args }) => {
+  return new Promise((resolve, reject) => {
+    const tempDir = app.getPath('temp');
+    const tempFileName = `${uuidv4()}.json`;
+    const tempFilePath = path.join(tempDir, tempFileName);
+
+    // Determine python script path
+    const scriptName = 'excel_handler';
+    let scriptPath;
+    if (isDev) {
+      // In development, run the .py script directly
+      scriptPath = path.join(__dirname, `${scriptName}.py`);
+    } else {
+      // In production, run the executable
+      const unpackedDir = app.getAppPath().replace('.asar', '.asar.unpacked');
+      scriptPath = path.join(unpackedDir, 'dist', scriptName, `${scriptName}.exe`);
+    }
+    
+    if (!fs.existsSync(scriptPath)) {
+        const errorMsg = `スクリプトが見つかりません: ${scriptPath}`;
+        log.error(errorMsg);
+        return resolve({ success: false, error: errorMsg });
+    }
+
+    fs.writeFile(tempFilePath, JSON.stringify(args), 'utf8', (err) => {
+      if (err) {
+        log.error('Failed to write temp file for python script:', err);
+        return resolve({ success: false, error: '一時ファイルの作成に失敗しました。' });
+      }
+
+      const pythonExecutable = isDev ? 'python' : scriptPath;
+      const scriptArgs = isDev ? [scriptPath, tempFilePath] : [tempFilePath];
+      
+      const pyProcess = spawn(pythonExecutable, scriptArgs);
+
+      let stdout = '';
+      let stderr = '';
+
+      pyProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      pyProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      pyProcess.on('close', (code) => {
+        if (stderr) {
+          log.error(`Python script stderr: ${stderr}`);
+        }
+        if (code !== 0) {
+          log.error(`Python script exited with code ${code}`);
+          return resolve({ success: false, error: `スクリプトの実行に失敗しました。詳細はログを確認してください。
+${stderr}` });
+        }
+        try {
+          const result = JSON.parse(stdout);
+          resolve(result);
+        } catch (e) {
+          log.error('Failed to parse python script output:', e, `
+Raw output: ${stdout}`);
+          resolve({ success: false, error: 'スクリプトからの応答の解析に失敗しました。' });
+        }
+      });
+
+      pyProcess.on('error', (spawnError) => {
+        log.error('Failed to start python script:', spawnError);
+        resolve({ success: false, error: `Pythonプロセスの開始に失敗しました: ${spawnError.message}` });
+      });
+    });
+  });
 });
