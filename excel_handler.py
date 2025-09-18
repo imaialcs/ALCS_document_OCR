@@ -7,26 +7,13 @@ import traceback
 
 # Add current directory to sys.path for PyInstaller compatibility
 if getattr(sys, 'frozen', False):
-    sys.path.append(os.path.dirname(sys.executable))
+    _script_dir = os.path.dirname(sys.executable)
 else:
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(_script_dir)
 
 # Define log file path at the very beginning, using the executable's directory for robustness
-# This ensures the log file is created next to the excel_handler.exe
-if getattr(sys, 'frozen', False):
-    # Running in a bundle (e.g., PyInstaller)
-    LOG_FILE_PATH = os.path.join(os.path.dirname(sys.executable), "excel_handler_error.log")
-else:
-    # Running in a normal Python environment
-    LOG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "excel_handler_error.log")
-
-# Redirect stdout and stderr to the log file
-try:
-    sys.stdout = open(LOG_FILE_PATH, "a", encoding="utf-8")
-    sys.stderr = open(LOG_FILE_PATH, "a", encoding="utf-8")
-except Exception as e:
-    # Fallback if redirection fails (e.g., permission issues)
-    pass # Cannot log to file if file opening fails
+LOG_FILE_PATH = os.path.join(_script_dir, "excel_handler_error.log")
 
 def log_error(e, context=""):
     try:
@@ -49,29 +36,34 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
 sys.excepthook = global_exception_handler
 
 # Debugging: Log script start and environment info
-log_error("Script started.", "DEBUG")
+log_error("Script started (after initial setup).", "DEBUG")
 log_error(f"Python version: {sys.version}", "DEBUG")
 log_error(f"Current working directory: {os.getcwd()}", "DEBUG")
 log_error(f"Script path: {os.path.abspath(__file__)}", "DEBUG")
 log_error(f"Log file path: {LOG_FILE_PATH}", "DEBUG")
+log_error(f"sys.path: {sys.path}", "DEBUG") # Log sys.path
 
 try:
     import xlwings as xw
     import pywintypes
     XLWINGS_AVAILABLE = True
-except ImportError:
+    log_error("xlwings imported successfully.", "DEBUG")
+except ImportError as e:
+    log_error(e, "ImportError: xlwings")
     XLWINGS_AVAILABLE = False
 except Exception as e:
-    log_error(e, "while importing xlwings")
+    log_error(e, "while importing xlwings (general exception)")
     XLWINGS_AVAILABLE = False
 
 try:
     import openpyxl
     OPENPYXL_AVAILABLE = True
-except ImportError:
+    log_error("openpyxl imported successfully.", "DEBUG")
+except ImportError as e:
+    log_error(e, "ImportError: openpyxl")
     OPENPYXL_AVAILABLE = False
 except Exception as e:
-    log_error(e, "while importing openpyxl")
+    log_error(e, "while importing openpyxl (general exception)")
     OPENPYXL_AVAILABLE = False
 
 def cell_to_row_col(cell_address):
@@ -243,7 +235,7 @@ if __name__ == "__main__":
 
     except Exception as e:
         log_error(e, "in main execution block")
-        sys.stderr.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False) + "\n")
+        log_error(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False), "ERROR_JSON_OUTPUT")
         sys.exit(1)
     finally:
         if json_file_path and os.path.exists(json_file_path):
