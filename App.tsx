@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay } from './types';
 import { withRetry, transformTimecardJsonForExcelHandler } from './services/utils';
-import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon } from './components/icons';
+import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon } from './components/icons';
 import DataTable from './components/DataTable';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
 import * as XLSX from 'xlsx';
@@ -264,6 +264,7 @@ const App = () => {
   const cancelProcessingRef = useRef(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [preMergeData, setPreMergeData] = useState<ProcessedData[] | null>(null);
+  const [splitModeCardIndex, setSplitModeCardIndex] = useState<number | null>(null);
   const [modalPreview, setModalPreview] = useState<FilePreview | null>(null);
   const [hasScrolledToResults, setHasScrolledToResults] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -746,6 +747,43 @@ const App = () => {
       setProcessedData(preMergeData);
       setPreMergeData(null);
     }
+  };
+
+  const handleToggleSplitMode = (index: number) => {
+    setSplitModeCardIndex(prevIndex => (prevIndex === index ? null : index));
+  };
+
+  const handleSplitCard = (cardIndex: number, splitRowIndex: number) => {
+    setProcessedData(prevData => {
+      const newData = [...prevData];
+      const originalCard = newData[cardIndex];
+
+      if (originalCard?.type !== 'table' || splitRowIndex <= 0 || splitRowIndex >= originalCard.data.length) {
+        return prevData;
+      }
+
+      // Keep track of the original data for undo purposes
+      setPreMergeData(JSON.parse(JSON.stringify(prevData)));
+
+      const topPartData = originalCard.data.slice(0, splitRowIndex);
+      const bottomPartData = originalCard.data.slice(splitRowIndex);
+
+      const topCard: ProcessedTable = {
+        ...originalCard,
+        data: topPartData,
+      };
+
+      const bottomCard: ProcessedTable = {
+        ...JSON.parse(JSON.stringify(originalCard)), // Deep copy for the new card
+        data: bottomPartData,
+      };
+
+      // Replace the original card with the top part and insert the bottom part
+      newData.splice(cardIndex, 1, topCard, bottomCard);
+
+      return newData;
+    });
+    setSplitModeCardIndex(null); // Close split mode after splitting
   };
   
   const handleDownloadSingle = async (item: ProcessedData) => {
@@ -1252,7 +1290,14 @@ const App = () => {
                                     この帳票をダウンロード
                                 </button>
                             </div>
-                            <DataTable cardIndex={index} headers={item.headers} data={item.data} onDataChange={handleDataChange} />
+                            <DataTable 
+                              cardIndex={index} 
+                              headers={item.headers} 
+                              data={item.data} 
+                              onDataChange={handleDataChange} 
+                              isSplitMode={splitModeCardIndex === index}
+                              onSplit={handleSplitCard}
+                            />
                           </>
                         ) : item.type === 'timecard' ? (
                             <>
@@ -1284,6 +1329,8 @@ const App = () => {
                                     headers={['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']}
                                     data={item.days.map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', d.afternoonStart || '', d.afternoonEnd || ''])}
                                     onDataChange={handleDataChange} 
+                                    isSplitMode={false} // Timecard tables don't support splitting
+                                    onSplit={() => {}} // No-op
                                 />
                             </>
                         ) : (
@@ -1310,14 +1357,24 @@ const App = () => {
                               <ArrowDownIcon className="w-5 h-5 text-gray-700" />
                           </button>
                           {item.type === 'table' && (
-                            <button 
-                              onClick={() => handleMergeCard(index)} 
-                              disabled={index === 0 || processedData[index - 1]?.type !== 'table' || item.type !== 'table'}
-                              className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                              title="上の表と結合"
-                            >
-                                <MergeIcon className="w-5 h-5 text-gray-700" />
-                            </button>
+                            <>
+                              <button 
+                                onClick={() => handleMergeCard(index)} 
+                                disabled={index === 0 || processedData[index - 1]?.type !== 'table' || item.type !== 'table'}
+                                className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="上の表と結合"
+                              >
+                                  <MergeIcon className="w-5 h-5 text-gray-700" />
+                              </button>
+                              <button 
+                                onClick={() => handleToggleSplitMode(index)} 
+                                disabled={item.data.length < 2}
+                                className={`p-1.5 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed ${splitModeCardIndex === index ? 'bg-blue-200 ring-2 ring-blue-400' : 'bg-gray-200'}`}
+                                title="表を分離"
+                              >
+                                  <ScissorsIcon className="w-5 h-5 text-gray-700" />
+                              </button>
+                            </>
                           )}
                       </div>
                     </div>
