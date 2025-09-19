@@ -4,6 +4,7 @@ import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTim
 import { withRetry, transformTimecardJsonForExcelHandler } from './services/utils';
 import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon } from './components/icons';
 import DataTable from './components/DataTable';
+import HandsontableGrid from './components/HandsontableGrid';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -236,7 +237,7 @@ const findMatchingSheetName = (fullName: string, sheetNames: string[]): string |
     }
 
     const trimmedFullName = fullName.trim();
-    const nameParts = trimmedFullName.split(/[　 ]+/).filter(p => p);
+    const nameParts = trimmedFullName.split(/[\u3000 ]+/).filter(p => p);
 
     if (nameParts.length === 0) {
         return null;
@@ -264,7 +265,6 @@ const App = () => {
   const cancelProcessingRef = useRef(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [preMergeData, setPreMergeData] = useState<ProcessedData[] | null>(null);
-  const [splitModeCardIndex, setSplitModeCardIndex] = useState<number | null>(null);
   const [modalPreview, setModalPreview] = useState<FilePreview | null>(null);
   const [hasScrolledToResults, setHasScrolledToResults] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -654,15 +654,25 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
-      if (item.type === 'table' && item.data[rowIndex]) {
-        item.data[rowIndex][cellIndex] = value;
-      } else if (item.type === 'timecard' && item.days[rowIndex]) {
+      if (item.type === 'timecard' && item.days[rowIndex]) {
           const day = item.days[rowIndex];
           const keys: (keyof TimecardDay)[] = ['date', 'dayOfWeek', 'morningStart', 'morningEnd', 'afternoonStart', 'afternoonEnd'];
           const key = keys[cellIndex];
           if (key) {
               (day[key] as string | null) = value || null;
           }
+      }
+      return newData;
+    });
+  };
+
+  const handleGridDataChange = (cardIndex: number, newTableData: (string | null)[][]) => {
+    setProcessedData(prevData => {
+      const newData = JSON.parse(JSON.stringify(prevData));
+      const item = newData[cardIndex];
+      if (item.type === 'table') {
+        // Handsontable might return nulls for empty cells, ensure they are strings
+        item.data = newTableData.map(row => row.map(cell => cell ?? ''));
       }
       return newData;
     });
@@ -721,11 +731,9 @@ const App = () => {
         return prevData;
       }
   
-      // イミュータブルな更新
       const updatedData = prevData
         .map((card, i) => {
           if (i === index - 1) {
-            // ターゲットカードを新しいオブジェクトで更新
             return {
               ...card,
               data: [
@@ -736,7 +744,7 @@ const App = () => {
           }
           return card;
         })
-        .filter((_, i) => i !== index); // 結合されたカードをフィルタリング
+        .filter((_, i) => i !== index);
   
       return updatedData;
     });
@@ -749,10 +757,6 @@ const App = () => {
     }
   };
 
-  const handleToggleSplitMode = (index: number) => {
-    setSplitModeCardIndex(prevIndex => (prevIndex === index ? null : index));
-  };
-
   const handleSplitCard = (cardIndex: number, splitRowIndex: number) => {
     setProcessedData(prevData => {
       const newData = [...prevData];
@@ -762,7 +766,6 @@ const App = () => {
         return prevData;
       }
 
-      // Keep track of the original data for undo purposes
       setPreMergeData(JSON.parse(JSON.stringify(prevData)));
 
       const topPartData = originalCard.data.slice(0, splitRowIndex);
@@ -774,16 +777,14 @@ const App = () => {
       };
 
       const bottomCard: ProcessedTable = {
-        ...JSON.parse(JSON.stringify(originalCard)), // Deep copy for the new card
+        ...JSON.parse(JSON.stringify(originalCard)),
         data: bottomPartData,
       };
 
-      // Replace the original card with the top part and insert the bottom part
       newData.splice(cardIndex, 1, topCard, bottomCard);
 
       return newData;
     });
-    setSplitModeCardIndex(null); // Close split mode after splitting
   };
   
   const handleDownloadSingle = async (item: ProcessedData) => {
@@ -997,7 +998,7 @@ const App = () => {
                 // 新規Excelファイル作成 (この部分は変更なし)
                 const wb = XLSX.utils.book_new();
                 timecardData.forEach(card => {
-                    const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?\"<>|]/g, '').substring(0, 31);
+                    const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
                     const ws_data = [
                         ['期間', card.title.yearMonth],
                         ['氏名', card.title.name],
@@ -1064,7 +1065,8 @@ const App = () => {
                 }
                 
                 if (unmatchedNames.length > 0) {
-                    setError(`転記が完了しましたが、一部の氏名のシートが見つかりませんでした。\n未転記: ${unmatchedNames.join(', ')}`);
+                    setError(`転記が完了しましたが、一部の氏名のシートが見つかりませんでした。
+未転記: ${unmatchedNames.join(', ')}`);
                 } else {
                     setError(null);
                 }
@@ -1072,7 +1074,7 @@ const App = () => {
                 // 新規Excelファイル作成
                 const wb = XLSX.utils.book_new();
                 tableData.forEach(card => {
-                  const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?\"<>|]/g, '').substring(0, 31);
+                  const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
                   const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
                   const ws = XLSX.utils.aoa_to_sheet(ws_data);
                   XLSX.utils.book_append_sheet(wb, ws, sheetName);
@@ -1250,134 +1252,123 @@ const App = () => {
               <Suspense fallback={<div>Loading...</div>}> 
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
                   <h2 className="text-lg font-semibold text-gray-700">3. 結果の確認と修正</h2>
-                  <div className="flex items-center gap-2">
-                    {preMergeData && (
-                        <button
-                            onClick={handleUndoMerge}
-                            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50"
-                        >
-                            <UndoIcon className="-ml-1 mr-2 h-5 w-5" />
-                            結合を元に戻す
-                        </button>
-                    )}
-                    <button
-                        onClick={handleDownloadAll}
-                        disabled={processedData.every(d => d.type === 'transcription')}
-                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                    >
-                        <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
-                        {processedData.some(d => d.type === 'timecard') ? 'すべてのタイムカードを転記' : outputMode === 'template' ? 'すべてテンプレートに転記' : 'すべてExcel形式でダウンロード'}
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-8">
-                  {processedData.map((item, index) => (
-                    <div key={index} className="flex items-start gap-2 border-t pt-6 first:border-t-0 first:pt-0">
-                      <div className="flex-grow">
-                        {item.type === 'table' ? (
-                          <> 
-                            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                    <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
-                                    <span className="text-gray-500">-</span>
-                                    <div className="flex items-center gap-1.5 flex-grow">
-                                        {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                        <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                    </div>
-                                </div>
-                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}の帳票をダウンロード`}>
-                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                    この帳票をダウンロード
-                                </button>
-                            </div>
-                            <DataTable 
-                              cardIndex={index} 
-                              headers={item.headers} 
-                              data={item.data} 
-                              onDataChange={handleDataChange} 
-                              isSplitMode={splitModeCardIndex === index}
-                              onSplit={handleSplitCard}
-                            />
-                          </>
-                        ) : item.type === 'timecard' ? (
-                            <>
-                                <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                    <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                        <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
-                                        <span className="text-gray-500">-</span>
-                                        <div className="flex items-center gap-1.5 flex-grow">
-                                            {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                            <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                        </div>
-                                    </div>
                                     <div className="flex items-center gap-2">
-                                        {outputMode === 'template' && excelTemplateFile?.path ? (
-                                            <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
-                                                <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                テンプレートに転記
-                                            </button>
-                                        ) : (
-                                            <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
-                                                <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                新規Excelでダウンロード
-                                            </button>
-                                        )}
+                                      {preMergeData && (
+                                          <button
+                                              onClick={handleUndoMerge}
+                                              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50"
+                                          >
+                                              <UndoIcon className="-ml-1 mr-2 h-5 w-5" />
+                                              結合を元に戻す
+                                          </button>
+                                      )}
+                                      <button
+                                          onClick={handleDownloadAll}
+                                          disabled={processedData.every(d => d.type === 'transcription')}
+                                          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                      >
+                                          <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
+                                          {processedData.some(d => d.type === 'timecard') ? 'すべてのタイムカードを転記' : outputMode === 'template' ? 'すべてテンプレートに転記' : 'すべてExcel形式でダウンロード'}
+                                      </button>
                                     </div>
-                                </div>
-                                <DataTable 
-                                    cardIndex={index} 
-                                    headers={['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']}
-                                    data={item.days.map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', d.afternoonStart || '', d.afternoonEnd || ''])}
-                                    onDataChange={handleDataChange} 
-                                    isSplitMode={false} // Timecard tables don't support splitting
-                                    onSplit={() => {}} // No-op
-                                />
-                            </>
-                        ) : (
-                          <>
-                            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                    <DocumentTextIcon className="h-6 w-6 text-gray-600" />
-                                    <span>{item.fileName}</span>
-                                </div>
-                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
-                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                    テキストファイルで保存
-                                </button>
-                            </div>
-                            <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
-                          </>
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-1 pt-1">
-                          <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
-                              <ArrowUpIcon className="w-5 h-5 text-gray-700" />
-                          </button>
-                          <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
-                              <ArrowDownIcon className="w-5 h-5 text-gray-700" />
-                          </button>
-                          {item.type === 'table' && (
-                            <>
-                              <button 
-                                onClick={() => handleMergeCard(index)} 
-                                disabled={index === 0 || processedData[index - 1]?.type !== 'table' || item.type !== 'table'}
-                                className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="上の表と結合"
-                              >
-                                  <MergeIcon className="w-5 h-5 text-gray-700" />
-                              </button>
-                              <button 
-                                onClick={() => handleToggleSplitMode(index)} 
-                                disabled={item.data.length < 2}
-                                className={`p-1.5 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed ${splitModeCardIndex === index ? 'bg-blue-200 ring-2 ring-blue-400' : 'bg-gray-200'}`}
-                                title="表を分離"
-                              >
-                                  <ScissorsIcon className="w-5 h-5 text-gray-700" />
-                              </button>
-                            </>
-                          )}
-                      </div>
-                    </div>
+                                  </div>
+                                  <div className="space-y-8">
+                                    {processedData.map((item, index) => (
+                                      <div key={index} className="flex items-start gap-2 border-t pt-6 first:border-t-0 first:pt-0">
+                                        <div className="flex-grow">
+                                          {item.type === 'table' ? (
+                                            <> 
+                                              <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                                  <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                                      <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                                      <span className="text-gray-500">-</span>
+                                                      <div className="flex items-center gap-1.5 flex-grow">
+                                                          {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                                          <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                                      </div>
+                                                  </div>
+                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}の帳票をダウンロード`}>
+                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                      この帳票をダウンロード
+                                                  </button>
+                                              </div>
+                                              <HandsontableGrid
+                                                headers={item.headers}
+                                                data={item.data}
+                                                onDataChange={(newData) => handleGridDataChange(index, newData)}
+                                                onSplit={(splitRow) => handleSplitCard(index, splitRow)}
+                                              />
+                                            </>
+                                          ) : item.type === 'timecard' ? (
+                                              <>
+                                                  <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                                          <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                                          <span className="text-gray-500">-</span>
+                                                          <div className="flex items-center gap-1.5 flex-grow">
+                                                              {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                                              <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                                          </div>
+                                                      </div>
+                                                      <div className="flex items-center gap-2">
+                                                          {outputMode === 'template' && excelTemplateFile?.path ? (
+                                                              <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
+                                                                  <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                                  テンプレートに転記
+                                                              </button>
+                                                          ) : (
+                                                              <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
+                                                                  <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                                  新規Excelでダウンロード
+                                                              </button>
+                                                          )}
+                                                      </div>
+                                                  </div>
+                                                  <DataTable 
+                                                      cardIndex={index} 
+                                                      headers={['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']}
+                                                      data={item.days.map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', d.afternoonStart || '', d.afternoonEnd || ''])}
+                                                      onDataChange={handleDataChange} 
+                                                      isSplitMode={false} // Timecard tables don't support splitting
+                                                      onSplit={() => {}} // No-op
+                                                  />
+                                              </>
+                                          ) : (
+                                            <>
+                                              <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                                  <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                                      <DocumentTextIcon className="h-6 w-6 text-gray-600" />
+                                                      <span>{item.fileName}</span>
+                                                  </div>
+                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
+                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                      テキストファイルで保存
+                                                  </button>
+                                              </div>
+                                              <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
+                                            </>
+                                          )}
+                                        </div>
+                                        <div className="flex flex-col gap-1 pt-1">
+                                            <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
+                                                <ArrowUpIcon className="w-5 h-5 text-gray-700" />
+                                            </button>
+                                            <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
+                                                <ArrowDownIcon className="w-5 h-5 text-gray-700" />
+                                            </button>
+                                            {item.type === 'table' && (
+                                              <>
+                                                <button 
+                                                  onClick={() => handleMergeCard(index)} 
+                                                  disabled={index === 0 || processedData[index - 1]?.type !== 'table'}
+                                                  className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                  title="上の表と結合"
+                                                >
+                                                    <MergeIcon className="w-5 h-5 text-gray-700" />
+                                                </button>
+                                              </>
+                                            )}
+                                        </div>                    </div>
                   ))}
                 </div>
               </Suspense>
