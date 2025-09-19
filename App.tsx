@@ -980,8 +980,9 @@ const App = () => {
                     XLSX.utils.book_append_sheet(wb, ws, sheetName);
                 });
                 const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const uint8FileData = new Uint8Array(fileData);
                 const fileName = 'Timecards_All.xlsx';
-                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
+                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, uint8FileData);
                 if (savedFilePath && savedFilePath.path) {
                     await window.electronAPI.openFile(savedFilePath.path);
                 }
@@ -1076,7 +1077,8 @@ const App = () => {
             画像(PNG, JPG)やPDFをアップロードすると、AIが内容を読み取りデータ化します。<br />
             認識結果は画面上で修正でき、Excelファイルとしてダウンロード可能です。<br />
             <span className="font-semibold text-blue-600">画像の向きを正すと、読み取り精度が向上します。</span><br />
-            <span className="font-semibold text-orange-600">※PDFは画像に変換して処理しますが、ファイルサイズが大きいと時間がかかるため、画像ファイルの利用をお勧めします。</span>
+            <span className="font-semibold text-orange-600">※PDFは画像に変換して処理しますが、ファイルサイズが大きいと時間がかかるため、画像ファイルの利用をお勧めします。</span><br />
+            <span className="font-semibold text-red-600">※マクロ有効ファイル(.xlsm)への転記は現在サポートしておりません。通常のExcelファイル(.xlsx)をご利用ください。</span>
           </p>
         </header>
 

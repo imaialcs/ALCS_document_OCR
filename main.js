@@ -160,11 +160,13 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
       const prompt = `
 以下の画像から情報を抽出し、JSON形式で出力してください。
 画像が勤怠管理表やタイムカードの場合、以下のtimecard形式で出力してください。
+- type: "timecard"
 - title: { yearMonth: "YYYY年MM月", name: "氏名" }
 - days: [{ date: "D", dayOfWeek: "ddd", morningStart: "HH:mm", morningEnd: "HH:mm", afternoonStart: "HH:mm", afternoonEnd: "HH:mm" }]
 - morning/afternoonの時間は、出勤・退勤のペアがなければnullにしてください。
 
 画像が請求書や明細書などの表形式データの場合、以下のtable形式で出力してください。
+- type: "table"
 - title: { yearMonth: "YYYY年MM月", name: "件名や宛名" }
 - headers: ["ヘッダー1", "ヘッダー2", ...]
 - data: [["行1セル1", "行1セル2", ...], ["行2セル1", "行2セル2", ...]]
@@ -196,23 +198,27 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
       log.info('Result has response property:', result && result.response !== undefined);
       log.info('Type of result.response:', typeof (result && result.response));
       const jsonText = result.candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
-      const data = JSON.parse(jsonText);
-      
-      // Add original filename to transcription type
-      if (!data.type) {
-        if (data.days && Array.isArray(data.days)) {
-          data.type = 'timecard';
-        } else if (data.headers && Array.isArray(data.headers) && data.data && Array.isArray(data.data)) {
-          data.type = 'table';
-        } else {
-          data.type = 'transcription';
-        }
-      }
+      const parsedData = JSON.parse(jsonText);
 
-      if (data.type === 'transcription') {
-        data.fileName = page.name;
+      const dataToProcess = Array.isArray(parsedData) ? parsedData : [parsedData];
+
+      for (const data of dataToProcess) {
+        // Add original filename to transcription type
+        if (!data.type) {
+          if (data.days && Array.isArray(data.days)) {
+            data.type = 'timecard';
+          } else if (data.headers && Array.isArray(data.headers) && data.data && Array.isArray(data.data)) {
+            data.type = 'table';
+          } else {
+            data.type = 'transcription';
+          }
+        }
+
+        if (data.type === 'transcription') {
+          data.fileName = page.name;
+        }
+        results.push(data);
       }
-      results.push(data);
 
     } catch (error) {
       log.error('Gemini OCR Error:', error);

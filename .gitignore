@@ -27,6 +27,7 @@ dist-ssr
 # ビルド成果物と依存関係
 /node_modules
 /dist
+/build
 /release
 
 # ログファイル
