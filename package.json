@@ -7,7 +7,7 @@
   "main": "main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/copy-worker.js",
+    "build": "tsc && vite build",
     "build:python": "pyinstaller excel_handler.py --onefile --distpath dist/excel_handler --name excel_handler",
     "dist": "npm run build && npm run build:python && electron-builder",
     "start": "electron main.js",
@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.16.0",
-    "@handsontable/react-wrapper": "^16.1.0",
+    "@handsontable/react": "^16.1.0",
     "debug": "^4.4.1",
     "dotenv": "^17.2.2",
     "electron-log": "^5.1.5",

@@ -4,6 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
+
+// Initialize electron-log to capture renderer console
+log.initialize({ spyRendererConsole: true });
 const { GoogleGenAI } = require('@google/genai');
 const { spawn } = require('child_process');
 const os = require('os');
@@ -98,6 +101,37 @@ app.on('ready', () => {
   createMenu();
   // Check for updates 2 seconds after app is ready
   setTimeout(() => autoUpdater.checkForUpdatesAndNotify(), 2000);
+
+  // Electronのデフォルトコンテキストメニューを無効化
+  mainWindow.webContents.on('context-menu', (e, params) => {
+    // e.preventDefault(); // この行を削除して、レンダラー側でイベントを処理できるようにする
+  });
+
+  ipcMain.on('show-context-menu', (event) => {
+    const template = [
+      {
+        label: 'バージョン情報',
+        click: () => {
+          dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'バージョン情報',
+            message: `ALCS文書OCR\nバージョン: ${app.getVersion()}`,
+          });
+        }
+      },
+      {
+        label: '更新を確認',
+        click: () => {
+          autoUpdater.checkForUpdatesAndNotify();
+        }
+      },
+      { type: 'separator' },
+      { role: 'reload', label: 'リロード' },
+      { role: 'toggleDevTools', label: '開発者ツール' },
+    ];
+    const menu = Menu.buildFromTemplate(template);
+    menu.popup({ window: BrowserWindow.fromWebContents(event.sender) });
+  });
 });
 
 app.on('window-all-closed', () => {

@@ -31,5 +31,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   restartApp: () => ipcRenderer.send('restart-app'),
 
+  // --- Context Menu API ---
+  showContextMenu: () => ipcRenderer.send('show-context-menu'),
+
   setMenu: (template) => ipcRenderer.invoke('set-menu', template)
 });

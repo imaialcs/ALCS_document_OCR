@@ -1,69 +1,61 @@
-import React, { useMemo } from 'react';
-import { ScissorsIcon } from './icons';
+import React from 'react';
+import { HotTable } from '@handsontable/react';
+import { registerAllModules } from 'handsontable/registry';
+import 'handsontable/dist/handsontable.full.css';
+
+// Import and register the Japanese language pack
+import jaJP from 'handsontable/i18n/languages/ja-JP';
+import { registerLanguageDictionary } from 'handsontable/i18n';
+
+registerLanguageDictionary(jaJP);
+
+// Handsontableの全モジュールを登録
+registerAllModules();
 
 const DataTable: React.FC<{
   cardIndex: number;
   headers: string[];
   data: string[][];
   onDataChange: (cardIndex: number, rowIndex: number, cellIndex: number, value: string) => void;
-  isSplitMode: boolean;
-  onSplit: (cardIndex: number, rowIndex: number) => void;
-}> = ({ cardIndex, headers, data, onDataChange, isSplitMode, onSplit }) => {
-  const columnWidths = useMemo(() => {
-    const widths = headers.map(h => h.length);
-    (data || []).forEach(row => {
-      (row || []).forEach((cell, cellIndex) => {
-        const cellLength = (cell || '').length;
-        if (cellLength > (widths[cellIndex] || 0)) {
-          widths[cellIndex] = cellLength;
-        }
-      });
-    });
-    return widths;
-  }, [data, headers]);
+}> = ({ cardIndex, headers, data, onDataChange }) => {
+
+  // Defensive check to ensure data and headers are always arrays
+  const safeData = Array.isArray(data) ? data : [];
+  const safeHeaders = Array.isArray(headers) ? headers : [];
+
+  const handleAfterChange = (changes: any, source: string) => {
+    if (source === 'loadData') {
+      return;
+    }
+    // changes can be null
+    if (changes) {
+        changes.forEach(([row, prop, oldValue, newValue]: [number, number, any, any]) => {
+            onDataChange(cardIndex, row, prop, newValue);
+        });
+    }
+  };
 
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full bg-white">
-        <thead className="bg-gray-100">
-          <tr>
-            {headers.map((header, index) => (
-              <th key={index} className="px-4 py-2 text-left text-sm font-semibold text-gray-600 uppercase tracking-wider" style={{ minWidth: `${columnWidths[index] * 1.5 + 4}ch` }}>{header}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {(data || []).map((row, rowIndex) => (
-            <React.Fragment key={rowIndex}>
-              {isSplitMode && rowIndex > 0 && (
-                <tr className="bg-blue-50 hover:bg-blue-100 border-b">
-                  <td colSpan={headers.length} className="py-0 px-0 text-center">
-                    <button
-                      onClick={() => onSplit(cardIndex, rowIndex)}
-                      className="w-full flex items-center justify-center gap-2 text-xs font-medium text-blue-700 py-1"
-                    >
-                      <ScissorsIcon className="w-4 h-4" />
-                      ここで表を分割
-                    </button>
-                  </td>
-                </tr>
-              )}
-              <tr className="border-b">
-                {(row || []).map((cell, cellIndex) => (
-                  <td key={cellIndex} className="px-4 py-2">
-                    <input
-                      type="text"
-                      value={cell || ''}
-                      onChange={(e) => onDataChange(cardIndex, rowIndex, cellIndex, e.target.value)}
-                      className="w-full px-1 py-0.5 border border-transparent focus:outline-none focus:border-blue-500 rounded-sm bg-transparent text-gray-900"
-                    />
-                  </td>
-                ))}
-              </tr>
-            </React.Fragment>
-          ))}
-        </tbody>
-      </table>
+    <div className="hot-container">
+      <HotTable
+        data={safeData}
+        colHeaders={safeHeaders}
+        rowHeaders={true}
+        width="auto"
+        height="auto"
+        stretchH="all"
+        contextMenu={true}
+        language='ja-JP' // Set the language to Japanese
+        allowInsertRow={true}
+        allowInsertColumn={true}
+        allowRemoveRow={true}
+        allowRemoveColumn={true}
+        fillHandle={true}
+        manualRowMove={true}
+        manualColumnMove={true}
+        licenseKey="non-commercial-and-evaluation"
+        afterChange={handleAfterChange}
+      />
     </div>
   );
 };

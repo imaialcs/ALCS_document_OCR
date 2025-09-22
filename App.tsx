@@ -4,10 +4,10 @@ import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTim
 import { withRetry, transformTimecardJsonForExcelHandler } from './services/utils';
 import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon } from './components/icons';
 import DataTable from './components/DataTable';
-import HandsontableGrid from './components/HandsontableGrid';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
 const getBasename = (filePath: string): string => {
   if (!filePath) return '';
@@ -15,8 +15,8 @@ const getBasename = (filePath: string): string => {
   return filePath.substring(filePath.lastIndexOf('/') + 1).substring(filePath.lastIndexOf('\\') + 1);
 };
 
-// pdf.worker.mjsをローカルで提供するように修正
-pdfjsLib.GlobalWorkerOptions.workerSrc = `./pdfjs/pdf.worker.mjs`;
+// Vite環境でpdf.worker.mjsを正しく読み込むための設定
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 const readFileAsBase64 = (file: File): Promise<{ base64: string; mimeType: string }> => {
   return new Promise((resolve, reject) => {
@@ -237,7 +237,7 @@ const findMatchingSheetName = (fullName: string, sheetNames: string[]): string |
     }
 
     const trimmedFullName = fullName.trim();
-    const nameParts = trimmedFullName.split(/[\u3000 ]+/).filter(p => p);
+    const nameParts = trimmedFullName.split(/[　 ]+/).filter(p => p);
 
     if (nameParts.length === 0) {
         return null;
@@ -264,7 +264,6 @@ const App = () => {
   const [error, setError] = useState<string | null>(null);
   const cancelProcessingRef = useRef(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [preMergeData, setPreMergeData] = useState<ProcessedData[] | null>(null);
   const [modalPreview, setModalPreview] = useState<FilePreview | null>(null);
   const [hasScrolledToResults, setHasScrolledToResults] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -492,6 +491,7 @@ const App = () => {
 
   const handleProcess = async () => {
     if (previews.length === 0) return;
+    console.log('[handleProcess] Starting processing...');
     setLoading(true);
     setError(null);
     setProcessedData([]);
@@ -502,49 +502,73 @@ const App = () => {
     let allExtractedData: ProcessedData[] = [];
 
     try {
-      for (const p of previews) {
+      for (const [index, p] of previews.entries()) {
+        console.log(`[handleProcess] Processing file ${index + 1} of ${previews.length}: ${p.name}`);
         if (cancelProcessingRef.current) {
           setError("処理がユーザーによって中断されました。");
+          console.log('[handleProcess] Processing cancelled by user.');
           break;
         }
         const file = p.file;
         let pagesToProcess: { base64: string; mimeType: string; name: string }[] = [];
 
         if (p.type === 'pdf') {
-          const arrayBuffer = await readFileAsArrayBuffer(file);
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-          const numPages = pdf.numPages;
+          try {
+            console.log(`[handleProcess] Reading PDF file as array buffer: ${file.name}`);
+            const arrayBuffer = await readFileAsArrayBuffer(file);
+            console.log(`[handleProcess] PDF file read. Getting document...`);
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            const numPages = pdf.numPages;
+            console.log(`[handleProcess] PDF document loaded successfully. Number of pages: ${numPages}`);
 
-          for (let i = 1; i <= numPages; i++) {
-            if (cancelProcessingRef.current) {
-              setError("処理がユーザーによって中断されました。");
-              break;
+            for (let i = 1; i <= numPages; i++) {
+              if (cancelProcessingRef.current) {
+                setError("処理がユーザーによって中断されました。");
+                console.log(`[handleProcess] Cancellation detected before processing page ${i}.`);
+                break;
+              }
+              console.log(`[handleProcess] Processing PDF page ${i} of ${numPages}`);
+              const page = await pdf.getPage(i);
+              console.log(`[handleProcess] Page ${i} retrieved.`);
+              const viewport = page.getViewport({ scale: 2 }); // Render at a higher scale for better OCR quality
+              console.log(`[handleProcess] Page ${i} viewport created. Scale: 2, Width: ${viewport.width}, Height: ${viewport.height}`);
+
+              const canvas = document.createElement('canvas');
+              const context = canvas.getContext('2d');
+              canvas.height = viewport.height;
+              canvas.width = viewport.width;
+              console.log(`[handleProcess] Canvas created for page ${i} with dimensions ${canvas.width}x${canvas.height}.`);
+
+              if (!context) {
+                throw new Error('Could not get canvas context for PDF page rendering');
+              }
+
+              console.log(`[handleProcess] Rendering page ${i} to canvas...`);
+              await page.render({ canvasContext: context, viewport: viewport }).promise;
+              console.log(`[handleProcess] Page ${i} rendered successfully.`);
+
+              const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+              pagesToProcess.push({ base64, mimeType: 'image/jpeg', name: `${file.name}_page_${i}` });
             }
-            const page = await pdf.getPage(i);
-            const viewport = page.getViewport({ scale: 2 }); // Render at a higher scale for better OCR quality
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
-
-            if (!context) {
-              throw new Error('Could not get canvas context for PDF page rendering');
-            }
-
-            await page.render({ canvasContext: context, viewport: viewport }).promise;
-            const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-            pagesToProcess.push({ base64, mimeType: 'image/jpeg', name: `${file.name}_page_${i}` });
+          } catch (pdfError) {
+            console.error(`[handleProcess] Error processing PDF file ${p.name}:`, pdfError);
+            const errorMessage = pdfError instanceof Error ? pdfError.message : String(pdfError);
+            throw new Error(`PDFファイル「${p.name}」の処理中にエラーが発生しました: ${errorMessage}`);
           }
         } else {
           // Image file
+          console.log(`[handleProcess] Reading image file as base64: ${file.name}`);
           const { base64, mimeType } = await readFileAsBase64(file);
           pagesToProcess.push({ base64, mimeType, name: file.name });
+          console.log(`[handleProcess] Image file processed: ${file.name}`);
         }
 
         if (cancelProcessingRef.current) break;
 
         if (pagesToProcess.length > 0) {
+          console.log(`[handleProcess] Sending ${pagesToProcess.length} page(s) to Gemini for OCR.`);
           const result = await withRetry(() => processDocumentPages(pagesToProcess));
+          console.log(`[handleProcess] Received ${result.length} data items from Gemini.`);
           allExtractedData.push(...result);
         }
       }
@@ -552,9 +576,11 @@ const App = () => {
       if (cancelProcessingRef.current) {
         setLoading(false);
         setError("処理がユーザーによって中断されました。");
+        console.log('[handleProcess] Final check: Processing was cancelled.');
         return;
       }
 
+      console.log('[handleProcess] Sanitizing and validating all extracted data.');
       const sanitizedAndValidatedData = allExtractedData.map(item => {
           if (item.type === 'timecard') {
             const card = item as ProcessedTimecard;
@@ -654,25 +680,15 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
-      if (item.type === 'timecard' && item.days[rowIndex]) {
+      if (item.type === 'table' && item.data[rowIndex]) {
+        item.data[rowIndex][cellIndex] = value;
+      } else if (item.type === 'timecard' && item.days[rowIndex]) {
           const day = item.days[rowIndex];
           const keys: (keyof TimecardDay)[] = ['date', 'dayOfWeek', 'morningStart', 'morningEnd', 'afternoonStart', 'afternoonEnd'];
           const key = keys[cellIndex];
           if (key) {
               (day[key] as string | null) = value || null;
           }
-      }
-      return newData;
-    });
-  };
-
-  const handleGridDataChange = (cardIndex: number, newTableData: (string | null)[][]) => {
-    setProcessedData(prevData => {
-      const newData = JSON.parse(JSON.stringify(prevData));
-      const item = newData[cardIndex];
-      if (item.type === 'table') {
-        // Handsontable might return nulls for empty cells, ensure they are strings
-        item.data = newTableData.map(row => row.map(cell => cell ?? ''));
       }
       return newData;
     });
@@ -719,73 +735,7 @@ const App = () => {
     });
   };
 
-  const handleMergeCard = (index: number) => {
-    setPreMergeData(processedData);
-    setProcessedData(prevData => {
-      if (index === 0) return prevData;
-  
-      const currentCard = prevData[index];
-      const targetCard = prevData[index - 1];
-  
-      if (currentCard.type !== 'table' || targetCard.type !== 'table') {
-        return prevData;
-      }
-  
-      const updatedData = prevData
-        .map((card, i) => {
-          if (i === index - 1) {
-            return {
-              ...card,
-              data: [
-                ...(card as ProcessedTable).data,
-                ...currentCard.data
-              ]
-            };
-          }
-          return card;
-        })
-        .filter((_, i) => i !== index);
-  
-      return updatedData;
-    });
-  };
 
-  const handleUndoMerge = () => {
-    if (preMergeData) {
-      setProcessedData(preMergeData);
-      setPreMergeData(null);
-    }
-  };
-
-  const handleSplitCard = (cardIndex: number, splitRowIndex: number) => {
-    setProcessedData(prevData => {
-      const newData = [...prevData];
-      const originalCard = newData[cardIndex];
-
-      if (originalCard?.type !== 'table' || splitRowIndex <= 0 || splitRowIndex >= originalCard.data.length) {
-        return prevData;
-      }
-
-      setPreMergeData(JSON.parse(JSON.stringify(prevData)));
-
-      const topPartData = originalCard.data.slice(0, splitRowIndex);
-      const bottomPartData = originalCard.data.slice(splitRowIndex);
-
-      const topCard: ProcessedTable = {
-        ...originalCard,
-        data: topPartData,
-      };
-
-      const bottomCard: ProcessedTable = {
-        ...JSON.parse(JSON.stringify(originalCard)),
-        data: bottomPartData,
-      };
-
-      newData.splice(cardIndex, 1, topCard, bottomCard);
-
-      return newData;
-    });
-  };
   
   const handleDownloadSingle = async (item: ProcessedData) => {
     if (!window.electronAPI) {
@@ -830,7 +780,7 @@ const App = () => {
             } else { // outputMode === 'new'
                 // 新規Excelファイル作成
                 const wb = XLSX.utils.book_new();
-                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
+                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\/:*?"<>|]/g, '').substring(0, 31);
                 const ws_data = [
                     ['期間', card.title.yearMonth],
                     ['氏名', card.title.name],
@@ -852,7 +802,7 @@ const App = () => {
                 XLSX.utils.book_append_sheet(wb, ws, sheetName);
                 const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
                 const uint8FileData = new Uint8Array(fileData);
-                const fileName = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}.xlsx`.replace(/[\\/:*?"<>|]/g, '_') || 'Timecard.xlsx';
+                const fileName = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}.xlsx`.replace(/[\/:*?"<>|]/g, '_') || 'Timecard.xlsx';
                 const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, uint8FileData);
                 console.log('saveFile result:', savedFilePath);
                 if (savedFilePath && savedFilePath.path) {
@@ -864,7 +814,7 @@ const App = () => {
 
         } else if (item.type === 'table') {
             const card = item as ProcessedTable;
-            const fileNameBase = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}`.replace(/[\\/:*?"<>|]/g, '_') || 'Document';
+            const fileNameBase = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}`.replace(/[\/:*?"<>|]/g, '_') || 'Document';
 
             let fileData: Uint8Array;
             let fileName: string = '';
@@ -901,7 +851,7 @@ const App = () => {
             } else {
                 // 新規Excelファイル作成
                 const wb = XLSX.utils.book_new();
-                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
+                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\/:*?"<>|]/g, '').substring(0, 31);
                 const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
                 const ws = XLSX.utils.aoa_to_sheet(ws_data);
                 XLSX.utils.book_append_sheet(wb, ws, sheetName);
@@ -909,8 +859,7 @@ const App = () => {
                 const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
                 console.log('saveFile result:', savedFilePath);
                 if (savedFilePath && savedFilePath.path) {
-                    const openFileResult = await window.electronAPI.openFile(savedFilePath.path);
-                    console.log('openFile result:', openFileResult);
+                    await window.electronAPI.openFile(savedFilePath.path);
                 }
             }
             setError(null);
@@ -998,7 +947,7 @@ const App = () => {
                 // 新規Excelファイル作成 (この部分は変更なし)
                 const wb = XLSX.utils.book_new();
                 timecardData.forEach(card => {
-                    const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
+                    const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\/:*?"<>|]/g, '').substring(0, 31);
                     const ws_data = [
                         ['期間', card.title.yearMonth],
                         ['氏名', card.title.name],
@@ -1074,7 +1023,7 @@ const App = () => {
                 // 新規Excelファイル作成
                 const wb = XLSX.utils.book_new();
                 tableData.forEach(card => {
-                  const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\/:*?"<>|]/g, '').substring(0, 31);
+                  const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\/:*?"<>|]/g, '').substring(0, 31);
                   const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
                   const ws = XLSX.utils.aoa_to_sheet(ws_data);
                   XLSX.utils.book_append_sheet(wb, ws, sheetName);
@@ -1108,8 +1057,19 @@ const App = () => {
   };
 
 
+  const handleContextMenu = (e: React.MouseEvent) => {
+    // Handsontableのコンポーネント内で右クリックされた場合は、そちらのメニューを優先する
+    const target = e.target as HTMLElement;
+    if (target.closest('.hot-container')) {
+      return;
+    }
+    // 上記以外の場合は、メインプロセスに汎用コンテキストメニューの表示を要求
+    e.preventDefault();
+    window.electronAPI?.showContextMenu();
+  };
+
   return (
-    <div className="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8" onContextMenu={handleContextMenu}>
       <div className="w-full max-w-6xl mx-auto">
         <header className="text-center mb-8">
           <h1 className="text-3xl sm:text-4xl font-bold text-gray-800">ALCS文書OCR</h1>
@@ -1252,123 +1212,102 @@ const App = () => {
               <Suspense fallback={<div>Loading...</div>}> 
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
                   <h2 className="text-lg font-semibold text-gray-700">3. 結果の確認と修正</h2>
-                                    <div className="flex items-center gap-2">
-                                      {preMergeData && (
-                                          <button
-                                              onClick={handleUndoMerge}
-                                              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50"
-                                          >
-                                              <UndoIcon className="-ml-1 mr-2 h-5 w-5" />
-                                              結合を元に戻す
-                                          </button>
-                                      )}
-                                      <button
-                                          onClick={handleDownloadAll}
-                                          disabled={processedData.every(d => d.type === 'transcription')}
-                                          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                                      >
-                                          <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
-                                          {processedData.some(d => d.type === 'timecard') ? 'すべてのタイムカードを転記' : outputMode === 'template' ? 'すべてテンプレートに転記' : 'すべてExcel形式でダウンロード'}
-                                      </button>
+                  <div className="flex items-center gap-2">
+
+                    <button
+                        onClick={handleDownloadAll}
+                        disabled={processedData.every(d => d.type === 'transcription')}
+                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    >
+                        <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
+                        {processedData.some(d => d.type === 'timecard') ? 'すべてのタイムカードを転記' : outputMode === 'template' ? 'すべてテンプレートに転記' : 'すべてExcel形式でダウンロード'}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-8">
+                  {processedData.map((item, index) => (
+                    <div key={index} className="flex items-start gap-2 border-t pt-6 first:border-t-0 first:pt-0">
+                      <div className="flex-grow">
+                        {item.type === 'table' ? (
+                          <> 
+                            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                    <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                    <span className="text-gray-500">-</span>
+                                    <div className="flex items-center gap-1.5 flex-grow">
+                                        {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                        <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
                                     </div>
-                                  </div>
-                                  <div className="space-y-8">
-                                    {processedData.map((item, index) => (
-                                      <div key={index} className="flex items-start gap-2 border-t pt-6 first:border-t-0 first:pt-0">
-                                        <div className="flex-grow">
-                                          {item.type === 'table' ? (
-                                            <> 
-                                              <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                                  <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                                      <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
-                                                      <span className="text-gray-500">-</span>
-                                                      <div className="flex items-center gap-1.5 flex-grow">
-                                                          {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                                          <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                                      </div>
-                                                  </div>
-                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}の帳票をダウンロード`}>
-                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                      この帳票をダウンロード
-                                                  </button>
-                                              </div>
-                                              <HandsontableGrid
-                                                headers={item.headers}
-                                                data={item.data}
-                                                onDataChange={(newData) => handleGridDataChange(index, newData)}
-                                                onSplit={(splitRow) => handleSplitCard(index, splitRow)}
-                                              />
-                                            </>
-                                          ) : item.type === 'timecard' ? (
-                                              <>
-                                                  <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                                          <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
-                                                          <span className="text-gray-500">-</span>
-                                                          <div className="flex items-center gap-1.5 flex-grow">
-                                                              {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                                              <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                                          </div>
-                                                      </div>
-                                                      <div className="flex items-center gap-2">
-                                                          {outputMode === 'template' && excelTemplateFile?.path ? (
-                                                              <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
-                                                                  <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                                  テンプレートに転記
-                                                              </button>
-                                                          ) : (
-                                                              <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
-                                                                  <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                                  新規Excelでダウンロード
-                                                              </button>
-                                                          )}
-                                                      </div>
-                                                  </div>
-                                                  <DataTable 
-                                                      cardIndex={index} 
-                                                      headers={['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']}
-                                                      data={item.days.map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', d.afternoonStart || '', d.afternoonEnd || ''])}
-                                                      onDataChange={handleDataChange} 
-                                                      isSplitMode={false} // Timecard tables don't support splitting
-                                                      onSplit={() => {}} // No-op
-                                                  />
-                                              </>
-                                          ) : (
-                                            <>
-                                              <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                                  <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                                      <DocumentTextIcon className="h-6 w-6 text-gray-600" />
-                                                      <span>{item.fileName}</span>
-                                                  </div>
-                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
-                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                      テキストファイルで保存
-                                                  </button>
-                                              </div>
-                                              <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
-                                            </>
-                                          )}
+                                </div>
+                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}の帳票をダウンロード`}>
+                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                    この帳票をダウンロード
+                                </button>
+                            </div>
+                            <DataTable 
+                              cardIndex={index} 
+                              headers={item.headers} 
+                              data={item.data || []} 
+                              onDataChange={handleDataChange} 
+                            />
+                          </>
+                        ) : item.type === 'timecard' ? (
+                            <>
+                                <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                    <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                        <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                        <span className="text-gray-500">-</span>
+                                        <div className="flex items-center gap-1.5 flex-grow">
+                                            {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                            <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
                                         </div>
-                                        <div className="flex flex-col gap-1 pt-1">
-                                            <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
-                                                <ArrowUpIcon className="w-5 h-5 text-gray-700" />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {outputMode === 'template' && excelTemplateFile?.path ? (
+                                            <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
+                                                <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                テンプレートに転記
                                             </button>
-                                            <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
-                                                <ArrowDownIcon className="w-5 h-5 text-gray-700" />
+                                        ) : (
+                                            <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
+                                                <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                新規Excelでダウンロード
                                             </button>
-                                            {item.type === 'table' && (
-                                              <>
-                                                <button 
-                                                  onClick={() => handleMergeCard(index)} 
-                                                  disabled={index === 0 || processedData[index - 1]?.type !== 'table'}
-                                                  className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                  title="上の表と結合"
-                                                >
-                                                    <MergeIcon className="w-5 h-5 text-gray-700" />
-                                                </button>
-                                              </>
-                                            )}
-                                        </div>                    </div>
+                                        )}
+                                    </div>
+                                </div>
+                                                                <DataTable 
+                                                                    cardIndex={index} 
+                                                                    headers={['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']}
+                                                                    data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', d.afternoonStart || '', d.afternoonEnd || ''])}
+                                                                    onDataChange={handleDataChange} 
+                                                                />                            </>
+                        ) : (
+                          <>
+                            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                    <DocumentTextIcon className="h-6 w-6 text-gray-600" />
+                                    <span>{item.fileName}</span>
+                                </div>
+                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
+                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                    テキストファイルで保存
+                                </button>
+                            </div>
+                            <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
+                          </>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1 pt-1">
+                          <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
+                              <ArrowUpIcon className="w-5 h-5 text-gray-700" />
+                          </button>
+                          <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
+                              <ArrowDownIcon className="w-5 h-5 text-gray-700" />
+                          </button>
+
+                      </div>
+                    </div>
                   ))}
                 </div>
               </Suspense>
