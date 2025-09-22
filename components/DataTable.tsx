@@ -17,11 +17,22 @@ const DataTable: React.FC<{
   headers: string[];
   data: string[][];
   onDataChange: (cardIndex: number, rowIndex: number, cellIndex: number, value: string) => void;
-}> = ({ cardIndex, headers, data, onDataChange }) => {
+  onRowCreate: (cardIndex: number, rowIndex: number, amount: number) => void;
+  onRowRemove: (cardIndex: number, rowIndex: number, amount: number) => void;
+}> = ({ cardIndex, headers, data, onDataChange, onRowCreate, onRowRemove }) => {
 
   // Defensive check to ensure data and headers are always arrays
   const safeData = Array.isArray(data) ? data : [];
   const safeHeaders = Array.isArray(headers) ? headers : [];
+
+  // Determine if this is a timecard table based on fixed headers
+  const isTimecard = safeHeaders.length === 6 &&
+                     safeHeaders[0] === '日付' &&
+                     safeHeaders[1] === '曜日' &&
+                     safeHeaders[2] === '午前 出勤' &&
+                     safeHeaders[3] === '午前 退勤' &&
+                     safeHeaders[4] === '午後 出勤' &&
+                     safeHeaders[5] === '午後 退勤';
 
   const handleAfterChange = (changes: any, source: string) => {
     if (source === 'loadData') {
@@ -33,6 +44,14 @@ const DataTable: React.FC<{
             onDataChange(cardIndex, row, prop, newValue);
         });
     }
+  };
+
+  const handleAfterCreateRow = (index: number, amount: number) => {
+    onRowCreate(cardIndex, index, amount);
+  };
+
+  const handleAfterRemoveRow = (index: number, amount: number) => {
+    onRowRemove(cardIndex, index, amount);
   };
 
   return (
@@ -47,14 +66,16 @@ const DataTable: React.FC<{
         contextMenu={true}
         language='ja-JP' // Set the language to Japanese
         allowInsertRow={true}
-        allowInsertColumn={true}
+        allowInsertColumn={!isTimecard} // Disable column insert for timecards
         allowRemoveRow={true}
-        allowRemoveColumn={true}
+        allowRemoveColumn={!isTimecard} // Disable column remove for timecards
         fillHandle={true}
         manualRowMove={true}
         manualColumnMove={true}
         licenseKey="non-commercial-and-evaluation"
         afterChange={handleAfterChange}
+        afterCreateRow={handleAfterCreateRow}
+        afterRemoveRow={handleAfterRemoveRow}
       />
     </div>
   );

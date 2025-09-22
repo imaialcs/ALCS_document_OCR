@@ -682,7 +682,7 @@ const App = () => {
       const item = newData[cardIndex];
       if (item.type === 'table' && item.data[rowIndex]) {
         item.data[rowIndex][cellIndex] = value;
-      } else if (item.type === 'timecard' && item.days[rowIndex]) {
+      } else if (item.type === 'timecard' && item.days && item.days[rowIndex]) { // タイムカード形式でも既存の行のみを更新
           const day = item.days[rowIndex];
           const keys: (keyof TimecardDay)[] = ['date', 'dayOfWeek', 'morningStart', 'morningEnd', 'afternoonStart', 'afternoonEnd'];
           const key = keys[cellIndex];
@@ -731,6 +731,39 @@ const App = () => {
 
       newData[index] = newData[swapIndex];
       newData[swapIndex] = item;
+      return newData;
+    });
+  };
+
+  const handleRowCreate = (cardIndex: number, rowIndex: number, amount: number) => {
+    setProcessedData(prevData => {
+      const newData = JSON.parse(JSON.stringify(prevData));
+      const item = newData[cardIndex];
+      if (item.type === 'timecard' && item.days) {
+        // 新しい空の行を挿入
+        const newEmptyRow = {
+          date: '', dayOfWeek: '', morningStart: '', morningEnd: '',
+          afternoonStart: '', afternoonEnd: ''
+        };
+        item.days.splice(rowIndex, 0, ...Array(amount).fill(newEmptyRow));
+      } else if (item.type === 'table' && item.data) {
+        // 新しい空の行を挿入
+        const newEmptyRow = Array(item.headers.length).fill('');
+        item.data.splice(rowIndex, 0, ...Array(amount).fill(newEmptyRow));
+      }
+      return newData;
+    });
+  };
+
+  const handleRowRemove = (cardIndex: number, rowIndex: number, amount: number) => {
+    setProcessedData(prevData => {
+      const newData = JSON.parse(JSON.stringify(prevData));
+      const item = newData[cardIndex];
+      if (item.type === 'timecard' && item.days) {
+        item.days.splice(rowIndex, amount);
+      } else if (item.type === 'table' && item.data) {
+        item.data.splice(rowIndex, amount);
+      }
       return newData;
     });
   };
@@ -866,9 +899,20 @@ const App = () => {
 
         } else if (item.type === 'transcription') {
             const textItem = item as ProcessedText;
-            const fileName = `${textItem.fileName.replace(/\.[^/.]+$/, "")}.txt`;
-            const fileData = new TextEncoder().encode(textItem.content);
-            const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
+            const wb = XLSX.utils.book_new();
+            const sheetName = textItem.fileName.replace(/\.[^/.]+$/, "").substring(0, 31) || 'Transcription';
+            const ws_data = [[textItem.content]]; // Put content in a single cell
+            const ws = XLSX.utils.aoa_to_sheet(ws_data);
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+            const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+            const uint8FileData = new Uint8Array(fileData);
+            const fileName = `${textItem.fileName.replace(/\.[^/.]+$/, "")}.xlsx`;
+            console.log(`[handleDownloadSingle] Transcription: Attempting to save file. fileName: ${fileName}, content length: ${textItem.content.length}`);
+            const savedFilePath = await window.electronAPI.saveFile({
+                defaultPath: fileName,
+                filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+            }, uint8FileData);
+            console.log('[handleDownloadSingle] Transcription: saveFile result:', savedFilePath);
             if (savedFilePath && savedFilePath.path) {
                 await window.electronAPI.openFile(savedFilePath.path);
             }
@@ -1038,12 +1082,21 @@ const App = () => {
             }
         }
 
-        // テキストデータの一括保存 (この部分は変更なし)
+        // テキストデータの一括保存
         if (transcriptionData.length > 0) {
             for (const item of transcriptionData) {
-                const fileName = `${item.fileName.replace(/\.[^/.]+$/, "")}.txt`;
-                const fileData = new TextEncoder().encode(item.content);
-                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
+                const wb = XLSX.utils.book_new();
+                const sheetName = item.fileName.replace(/\.[^/.]+$/, "").substring(0, 31) || 'Transcription';
+                const ws_data = [[item.content]];
+                const ws = XLSX.utils.aoa_to_sheet(ws_data);
+                XLSX.utils.book_append_sheet(wb, ws, sheetName);
+                const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const uint8FileData = new Uint8Array(fileData);
+                const fileName = `${item.fileName.replace(/\.[^/.]+$/, "")}.xlsx`;
+                const savedFilePath = await window.electronAPI.saveFile({
+                    defaultPath: fileName,
+                    filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+                }, uint8FileData);
                 if (savedFilePath && savedFilePath.path) {
                     await window.electronAPI.openFile(savedFilePath.path);
                 }
@@ -1220,7 +1273,7 @@ const App = () => {
                         className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
                     >
                         <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
-                        {processedData.some(d => d.type === 'timecard') ? 'すべてのタイムカードを転記' : outputMode === 'template' ? 'すべてテンプレートに転記' : 'すべてExcel形式でダウンロード'}
+                        すべての表をダウンロード
                     </button>
                   </div>
                 </div>
@@ -1249,6 +1302,8 @@ const App = () => {
                               headers={item.headers} 
                               data={item.data || []} 
                               onDataChange={handleDataChange} 
+                              onRowCreate={handleRowCreate}
+                              onRowRemove={handleRowRemove}
                             />
                           </>
                         ) : item.type === 'timecard' ? (
@@ -1281,6 +1336,8 @@ const App = () => {
                                                                     headers={['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']}
                                                                     data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', d.afternoonStart || '', d.afternoonEnd || ''])}
                                                                     onDataChange={handleDataChange} 
+                                                                    onRowCreate={handleRowCreate}
+                                                                    onRowRemove={handleRowRemove}
                                                                 />                            </>
                         ) : (
                           <>

@@ -265,13 +265,22 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
 
 // Save File
 ipcMain.handle('save-file', async (event, options, data) => {
-  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, options);
-  if (canceled || !filePath) {
+  const { canceled, filePath: selectedFilePath } = await dialog.showSaveDialog(mainWindow, options);
+  if (canceled || !selectedFilePath) {
     return { success: false, canceled: true };
   }
+
+  let finalFilePath = selectedFilePath;
+  // 拡張子がない場合、または異なる拡張子の場合に.xlsxを追加
+  if (!finalFilePath.toLowerCase().endsWith('.xlsx')) {
+    finalFilePath += '.xlsx';
+  }
+
   try {
-    await fs.promises.writeFile(filePath, data);
-    return { success: true, path: filePath };
+    // Convert ArrayBuffer to Buffer
+    const bufferData = Buffer.from(data);
+    await fs.promises.writeFile(finalFilePath, bufferData); // 修正後のパスを使用
+    return { success: true, path: finalFilePath };
   } catch (error) {
     log.error('File Save Error:', error);
     return { success: false, error: error.message };
