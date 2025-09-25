@@ -823,6 +823,42 @@ const App = () => {
     });
   };
 
+  const handleColCreate = (cardIndex: number, colIndex: number, amount: number) => {
+    setProcessedData(prevData => {
+      const newData = JSON.parse(JSON.stringify(prevData));
+      const item = newData[cardIndex];
+      if (item.type === 'table' && item.headers && item.data) {
+        // ヘッダーに新しい列を追加
+        for (let i = 0; i < amount; i++) {
+          item.headers.splice(colIndex + i, 0, '');
+        }
+        // 各行に新しいセルを追加
+        item.data.forEach((row: string[]) => {
+          for (let i = 0; i < amount; i++) {
+            row.splice(colIndex + i, 0, '');
+          }
+        });
+      }
+      return newData;
+    });
+  };
+
+  const handleColRemove = (cardIndex: number, colIndex: number, amount: number) => {
+    setProcessedData(prevData => {
+      const newData = JSON.parse(JSON.stringify(prevData));
+      const item = newData[cardIndex];
+      if (item.type === 'table' && item.headers && item.data) {
+        // ヘッダーから列を削除
+        item.headers.splice(colIndex, amount);
+        // 各行からセルを削除
+        item.data.forEach((row: string[]) => {
+          row.splice(colIndex, amount);
+        });
+      }
+      return newData;
+    });
+  };
+
 
   
   const handleDownloadSingle = async (item: ProcessedData) => {
@@ -1396,6 +1432,8 @@ const App = () => {
                                 onDataChange={handleDataChange} 
                                 onRowCreate={handleRowCreate}
                                 onRowRemove={handleRowRemove}
+                                onColCreate={handleColCreate}
+                                onColRemove={handleColRemove}
                             />
                           </>
                         ) : item.type === 'timecard' ? (
@@ -1423,14 +1461,16 @@ const App = () => {
                                         )}
                                     </div>
                                 </div>
-                                                                <DataTable 
-                                                                    cardIndex={index} 
-                                                                    headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
-                                                                    data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
-                                                                    onDataChange={handleDataChange} 
-                                                                    onRowCreate={handleRowCreate}
-                                                                    onRowRemove={handleRowRemove}
-                                                                />                            </>
+                                <DataTable 
+                                    cardIndex={index} 
+                                    headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
+                                    data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
+                                    onDataChange={handleDataChange} 
+                                    onRowCreate={handleRowCreate}
+                                    onRowRemove={handleRowRemove}
+                                    onColCreate={handleColCreate}
+                                    onColRemove={handleColRemove}
+                                />                            </>
                         ) : (
                           <>
                             <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
