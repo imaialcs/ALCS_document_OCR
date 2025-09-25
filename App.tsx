@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay } from './types';
-import { withRetry, transformTimecardJsonForExcelHandler, processImageWithJimp, readFileAsArrayBuffer } from './services/utils';
+import { withRetry, transformTimecardJsonForExcelHandler, readFileAsArrayBuffer } from './services/utils';
 import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UserCircleIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon, AdjustmentsHorizontalIcon } from './components/icons';
 import DataTable from './components/DataTable';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
@@ -598,7 +598,7 @@ const App = () => {
                 }, 'image/jpeg', 0.95);
               });
 
-              const { base64, mimeType } = await processImageWithJimp(canvasBuffer, preprocessingOptions);
+              const { base64, mimeType } = await window.electronAPI.processImageForOcr(canvasBuffer, preprocessingOptions);
               pagesToProcess.push({ base64, mimeType, name: `${file.name}_page_${i}` });
             }
           } catch (pdfError) {
@@ -611,7 +611,8 @@ const App = () => {
           console.log(`[handleProcess] Reading image file as array buffer: ${file.name}`);
           const arrayBuffer = await readFileAsArrayBuffer(file);
           console.log(`[handleProcess] Processing image with Jimp: ${file.name}`);
-          const { base64, mimeType } = await processImageWithJimp(arrayBuffer, preprocessingOptions);
+          console.log("window.electronAPI in App.tsx before calling processImageForOcr:", window.electronAPI);
+          const { base64, mimeType } = await window.electronAPI.processImageForOcr(arrayBuffer, preprocessingOptions);
           pagesToProcess.push({ base64, mimeType, name: file.name });
           console.log(`[handleProcess] Image file processed: ${file.name}`);
         }
@@ -1201,7 +1202,6 @@ const App = () => {
                 <details className="group rounded-lg bg-gray-50 p-4 transition-all duration-300 open:ring-1 open:ring-gray-200">
                     <summary className="flex cursor-pointer list-none items-center justify-between text-lg font-semibold text-gray-700">
                         <div className="flex items-center gap-3">
-                            <AdjustmentsHorizontalIcon className="h-6 w-6 text-gray-500" />
                             <span>画像の前処理設定 (オプション)</span>
                         </div>
                         <ChevronDownIcon className="h-5 w-5 text-gray-500 transition-transform duration-300 group-open:rotate-180" />
@@ -1234,7 +1234,6 @@ const App = () => {
                 <details className="group rounded-lg bg-gray-50 p-4 transition-all duration-300 open:ring-1 open:ring-gray-200">
                     <summary className="flex cursor-pointer list-none items-center justify-between text-lg font-semibold text-gray-700">
                         <div className="flex items-center gap-3">
-                            <UserCircleIcon className="h-6 w-6 text-gray-500" />
                             <span>氏名読み取り精度向上 (オプション)</span>
                         </div>
                         <ChevronDownIcon className="h-5 w-5 text-gray-500 transition-transform duration-300 group-open:rotate-180" />
@@ -1266,7 +1265,6 @@ const App = () => {
                 <details className="group rounded-lg bg-gray-50 p-4 transition-all duration-300 open:ring-1 open:ring-gray-200">
                     <summary className="flex cursor-pointer list-none items-center justify-between text-lg font-semibold text-gray-700">
                         <div className="flex items-center gap-3">
-                            <TableCellsIcon className="h-6 w-6 text-gray-500" />
                             <span>Excel出力設定</span>
                         </div>
                         <ChevronDownIcon className="h-5 w-5 text-gray-500 transition-transform duration-300 group-open:rotate-180" />
