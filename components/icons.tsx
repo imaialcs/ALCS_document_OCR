@@ -113,8 +113,22 @@ export const UndoIcon: React.FC<IconProps> = ({ className, title, ...props }) =>
 );
 
 export const ScissorsIcon: React.FC<IconProps> = ({ className, title, ...props }) => (
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" {...props}>
     {title && <title>{title}</title>}
     <path strokeLinecap="round" strokeLinejoin="round" d="M15.964 3.964l-3.32 3.32a5.25 5.25 0 01-7.424 0L3.964 5.024M15.964 3.964L12 7.924M15.964 3.964L18.976.952M12 7.924l-2.048-2.048M12 7.924L14.048 9.972M3.964 5.024L.952 2.012M3.964 5.024L6.012 7.072m9.952 9.952l3.32-3.32a5.25 5.25 0 00-7.424 0l-1.264 1.264m-3.32-3.32l-2.048 2.048m0 0L.952 18.976m2.012-2.012L5.012 15m9.952 3.952l-1.264-1.264M15 21.75l-3.32-3.32a5.25 5.25 0 00-7.424 0L3 19.75m12 2l-2.048-2.048m0 0L12.952 15" />
+  </svg>
+);
+
+export const AdjustmentsHorizontalIcon: React.FC<IconProps> = ({ className, title, ...props }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" {...props}>
+    {title && <title>{title}</title>}
+    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+  </svg>
+);
+
+export const UserCircleIcon: React.FC<IconProps> = ({ className, title, ...props }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" {...props}>
+    {title && <title>{title}</title>}
+    <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
   </svg>
 );

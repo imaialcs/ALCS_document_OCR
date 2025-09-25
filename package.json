@@ -7,19 +7,20 @@
   "repository": "github:imaialcs/ALCS_document_OCR",
   "main": "main.js",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm run build:preload && concurrently \"vite\" \"electron .\"",
     "build": "npm run build:renderer && npm run build:preload",
     "build:renderer": "vite build",
     "build:preload": "tsc -p tsconfig.preload.json",
     "build:python": "pyinstaller excel_handler.py --onefile --distpath dist/excel_handler --name excel_handler",
     "dist": "npm run clean-dist && npm run build && npm run build:python && electron-builder",
-    "start": "electron main.js",
+    "start": "electron .",
     "preinstall": "npx rimraf node_modules/.cache/electron-builder",
     "clean-dist": "npx rimraf dist build_output"
   },
   "dependencies": {
     "@google/genai": "^1.16.0",
     "@handsontable/react": "^16.1.0",
+    "buffer": "^6.0.3",
     "debug": "^4.4.1",
     "dotenv": "^17.2.2",
     "electron-log": "^5.1.5",
@@ -27,9 +28,11 @@
     "exceljs": "^4.4.0",
     "graceful-fs": "^4.2.11",
     "handsontable": "^16.1.0",
+    "jimp": "^1.6.0",
     "pdfjs-dist": "^4.4.168",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "vite-plugin-node-polyfills": "^0.24.0",
     "xlsx": "0.18.5"
   },
   "devDependencies": {
@@ -38,6 +41,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
+    "concurrently": "^9.2.1",
     "electron": "^38.0.0",
     "electron-builder": "^24.13.3",
     "postcss": "^8.4.38",

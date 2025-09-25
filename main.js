@@ -25,9 +25,7 @@ let mainWindow;
 
 // --- Main Window Creation ---
 function createWindow() {
-  const preloadPath = isDev
-    ? path.join(__dirname, 'preload.ts')
-    : path.join(__dirname, 'dist', 'preload.js');
+  const preloadPath = path.join(__dirname, 'dist', 'preload.js');
 
   log.info(`Resolved preloadPath: ${preloadPath}`); // この行を追加
 

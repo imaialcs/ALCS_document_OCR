@@ -1,3 +1,50 @@
+import * as Jimp from 'jimp';
+import { Buffer } from 'buffer';
+
+// Make Buffer available globally in the browser environment for Jimp
+(window as any).Buffer = Buffer;
+
+/**
+ * Processes an image using Jimp for optimization before sending to an OCR API.
+ * - Resizes the image to a max width/height of 1200px.
+ * - Sets a standard quality for compression.
+ * @param arrayBuffer The raw image data.
+ * @param options Options to control preprocessing.
+ * @returns A promise that resolves to the processed image as a base64 string and its mime type.
+ */
+export const processImageWithJimp = async (arrayBuffer: ArrayBuffer, options: { isAutocropEnabled: boolean, isContrastAdjustmentEnabled: boolean }): Promise<{ base64: string; mimeType: string }> => {
+  try {
+    // The `jimp` module is a CJS module. When imported into an ES module context by Vite,
+    // the actual constructor and static methods are often on a `default` property.
+    // We cast to `any` to bypass TypeScript's static analysis for this interop layer.
+    const image = await (Jimp as any).default.read(Buffer.from(arrayBuffer));
+    
+    if (options.isAutocropEnabled) {
+      image.autocrop();
+    }
+
+    if (options.isContrastAdjustmentEnabled) {
+      image.contrast(0.2);
+    }
+
+    // Resize the image to fit within 1200x1200, maintaining aspect ratio
+    image.scaleToFit(1200, 1200);
+
+    // Set quality for JPEG compression
+    image.quality(85);
+
+    const mimeType = (Jimp as any).default.MIME_JPEG;
+    const base64 = await image.getBase64Async(mimeType);
+
+    // Return only the data part of the base64 string
+    return { base64: base64.split(',')[1], mimeType };
+
+  } catch (error) {
+    console.error("Error processing image with Jimp:", error);
+    throw new Error("画像の前処理中にエラーが発生しました。");
+  }
+};
+
 export const readFileAsBase64 = (file: File): Promise<{ base64: string; mimeType: string }> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

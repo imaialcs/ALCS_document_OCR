@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay } from './types';
-import { withRetry, transformTimecardJsonForExcelHandler } from './services/utils';
-import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UsersIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon } from './components/icons';
+import { withRetry, transformTimecardJsonForExcelHandler, processImageWithJimp, readFileAsArrayBuffer } from './services/utils';
+import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UserCircleIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon, AdjustmentsHorizontalIcon } from './components/icons';
 import DataTable from './components/DataTable';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
 import * as XLSX from 'xlsx';
@@ -29,17 +29,6 @@ const readFileAsBase64 = (file: File): Promise<{ base64: string; mimeType: strin
     reader.onerror = (error) => reject(error);
     reader.readAsDataURL(file);
   });
-};
-
-const readFileAsArrayBuffer = (file: File): Promise<ArrayBuffer> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-            resolve(reader.result as ArrayBuffer);
-        };
-        reader.onerror = (error) => reject(error);
-        reader.readAsArrayBuffer(file);
-    });
 };
 
 const MultiFileUploader: React.FC<{ 
@@ -238,7 +227,7 @@ const findMatchingSheetName = (fullName: string, sheetNames: string[]): string |
     }
 
     const trimmedFullName = fullName.trim();
-    const nameParts = trimmedFullName.split(/[　 ]+/).filter(p => p);
+    const nameParts = trimmedFullName.split(/[\u3000 ]+/).filter(p => p);
 
     if (nameParts.length === 0) {
         return null;
@@ -275,6 +264,7 @@ const App = () => {
   const [roster, setRoster] = useState<string[]>([]);
   const [rosterFile, setRosterFile] = useState<{ name: string; path: string } | null>(null);
   const [rosterSettings, setRosterSettings] = useState({ sheetName: '', column: 'A' });
+  const [preprocessingOptions, setPreprocessingOptions] = useState({ isAutocropEnabled: true, isContrastAdjustmentEnabled: true });
   const [excelTemplateFile, setExcelTemplateFile] = useState<{ name: string, path: string } | null>(null);
   const [excelTemplateData, setExcelTemplateData] = useState<ArrayBuffer | null>(null);
   const [outputMode, setOutputMode] = useState<'new' | 'template'>('new');
@@ -482,6 +472,11 @@ const App = () => {
     setRosterSettings(prev => ({ ...prev, [name]: value }));
   };
 
+  const handlePreprocessingOptionsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, checked } = e.target;
+    setPreprocessingOptions(prev => ({ ...prev, [name]: checked }));
+  };
+
   const handleRosterUpload = async () => {
     console.log('handleRosterUpload called');
     if (!window.electronAPI) return;
@@ -508,12 +503,8 @@ const App = () => {
         try {
           setExcelTemplateFile({ name: result.name, path: result.path });
           
-          // IPCを介して渡されたBufferライクなオブジェクトは、プレーンなオブジェクトやUint8Arrayの場合がある。
-          // これを確実にArrayBufferに変換する。
-          // Uint8Arrayコンストラクタは、Buffer, TypedArray, Array-like objectを受け取れるため堅牢。
           const uint8Array = new Uint8Array(result.data);
           
-          // .slice().buffer を使って、ビューではなく実体のコピーを取得する
           const arrayBuffer = uint8Array.slice().buffer;
 
           setExcelTemplateData(arrayBuffer);
@@ -594,8 +585,21 @@ const App = () => {
               await page.render({ canvasContext: context, viewport: viewport }).promise;
               console.log(`[handleProcess] Page ${i} rendered successfully.`);
 
-              const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-              pagesToProcess.push({ base64, mimeType: 'image/jpeg', name: `${file.name}_page_${i}` });
+              const canvasBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+                canvas.toBlob(blob => {
+                  if (!blob) {
+                    reject(new Error('Canvas to Blob conversion failed'));
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => resolve(reader.result as ArrayBuffer);
+                  reader.onerror = reject;
+                  reader.readAsArrayBuffer(blob);
+                }, 'image/jpeg', 0.95);
+              });
+
+              const { base64, mimeType } = await processImageWithJimp(canvasBuffer, preprocessingOptions);
+              pagesToProcess.push({ base64, mimeType, name: `${file.name}_page_${i}` });
             }
           } catch (pdfError) {
             console.error(`[handleProcess] Error processing PDF file ${p.name}:`, pdfError);
@@ -604,8 +608,10 @@ const App = () => {
           }
         } else {
           // Image file
-          console.log(`[handleProcess] Reading image file as base64: ${file.name}`);
-          const { base64, mimeType } = await readFileAsBase64(file);
+          console.log(`[handleProcess] Reading image file as array buffer: ${file.name}`);
+          const arrayBuffer = await readFileAsArrayBuffer(file);
+          console.log(`[handleProcess] Processing image with Jimp: ${file.name}`);
+          const { base64, mimeType } = await processImageWithJimp(arrayBuffer, preprocessingOptions);
           pagesToProcess.push({ base64, mimeType, name: file.name });
           console.log(`[handleProcess] Image file processed: ${file.name}`);
         }
@@ -1195,7 +1201,40 @@ const App = () => {
                 <details className="group rounded-lg bg-gray-50 p-4 transition-all duration-300 open:ring-1 open:ring-gray-200">
                     <summary className="flex cursor-pointer list-none items-center justify-between text-lg font-semibold text-gray-700">
                         <div className="flex items-center gap-3">
-                            <UsersIcon className="h-6 w-6 text-gray-500" />
+                            <AdjustmentsHorizontalIcon className="h-6 w-6 text-gray-500" />
+                            <span>画像の前処理設定 (オプション)</span>
+                        </div>
+                        <ChevronDownIcon className="h-5 w-5 text-gray-500 transition-transform duration-300 group-open:rotate-180" />
+                    </summary>
+                    <div className="mt-4 border-t pt-4 space-y-3">
+                        <p className="text-sm text-gray-600">OCRの認識精度を向上させるため、APIに送信する前に画像を自動で加工します。画像の特性によってはOFFにすると精度が向上する場合もあります。</p>
+                        <div className="mt-2 space-y-2">
+                            <div className="relative flex items-start">
+                                <div className="flex h-6 items-center">
+                                    <input id="isAutocropEnabled" name="isAutocropEnabled" type="checkbox" checked={preprocessingOptions.isAutocropEnabled} onChange={handlePreprocessingOptionsChange} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600" />
+                                </div>
+                                <div className="ml-3 text-sm leading-6">
+                                    <label htmlFor="isAutocropEnabled" className="font-medium text-gray-900">余白の自動トリミング</label>
+                                    <p className="text-gray-500">画像の不要な余白を自動で除去し、OCRの認識範囲を最適化します。</p>
+                                </div>
+                            </div>
+                            <div className="relative flex items-start">
+                                <div className="flex h-6 items-center">
+                                    <input id="isContrastAdjustmentEnabled" name="isContrastAdjustmentEnabled" type="checkbox" checked={preprocessingOptions.isContrastAdjustmentEnabled} onChange={handlePreprocessingOptionsChange} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600" />
+                                </div>
+                                <div className="ml-3 text-sm leading-6">
+                                    <label htmlFor="isContrastAdjustmentEnabled" className="font-medium text-gray-900">コントラストの自動調整</label>
+                                    <p className="text-gray-500">画像のコントラストを調整し、文字をより鮮明にします。</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details className="group rounded-lg bg-gray-50 p-4 transition-all duration-300 open:ring-1 open:ring-gray-200">
+                    <summary className="flex cursor-pointer list-none items-center justify-between text-lg font-semibold text-gray-700">
+                        <div className="flex items-center gap-3">
+                            <UserCircleIcon className="h-6 w-6 text-gray-500" />
                             <span>氏名読み取り精度向上 (オプション)</span>
                         </div>
                         <ChevronDownIcon className="h-5 w-5 text-gray-500 transition-transform duration-300 group-open:rotate-180" />
@@ -1204,7 +1243,6 @@ const App = () => {
                         <p className="text-sm text-gray-600">氏名が記載されたExcelファイル（名簿）をアップロードすると、OCRが読み取った氏名を自動で補正します。名簿のシート名と氏名が記載されている列を指定してください。</p>
                         <div className="flex items-center gap-4">
                             <label htmlFor="roster-upload" className="cursor-pointer rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50" onClick={handleRosterUpload}>名簿ファイルを選択</label>
-                            {/* <input type="file" id="roster-upload" className="hidden" accept=".xlsx, .xls, .xlsm" onChange={handleRosterUpload} /> */}
                             {rosterFile && (
                                 <div className="flex items-center gap-2">
                                     <span className="text-sm text-gray-700">{rosterFile.name} ({roster.length}名)</span>
