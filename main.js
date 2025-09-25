@@ -25,11 +25,17 @@ let mainWindow;
 
 // --- Main Window Creation ---
 function createWindow() {
+  const preloadPath = isDev
+    ? path.join(__dirname, 'preload.ts')
+    : path.join(__dirname, 'dist', 'preload.js');
+
+  log.info(`Resolved preloadPath: ${preloadPath}`); // この行を追加
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadPath, // ここで切り替えたパスを使用
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -86,6 +92,9 @@ const createMenu = () => {
           label: '更新を確認',
           click: () => {
             autoUpdater.checkForUpdatesAndNotify();
+            if (mainWindow) {
+              mainWindow.webContents.send('show-update-notification');
+            }
           }
         }
       ]
@@ -154,13 +163,6 @@ const sendUpdateStatus = (status) => {
   }
 };
 
-autoUpdater.on('checking-for-update', () => sendUpdateStatus({ message: '更新を確認中...' }));
-autoUpdater.on('update-available', (info) => sendUpdateStatus({ message: `新しいバージョン (${info.version}) が利用可能です。ダウンロードを開始します。` }));
-autoUpdater.on('update-not-available', () => sendUpdateStatus({ message: 'お使いのバージョンは最新です。', transient: true }));
-autoUpdater.on('error', (err) => sendUpdateStatus({ message: `更新エラー: ${err.message}` }));
-autoUpdater.on('download-progress', (progressObj) => {
-  sendUpdateStatus({ message: `ダウンロード中 ${Math.floor(progressObj.percent)}% (${Math.floor(progressObj.bytesPerSecond / 1024)} KB/s)` });
-});
 autoUpdater.on('update-downloaded', () => sendUpdateStatus({ message: 'アップデートの準備ができました。アプリケーションを再起動してください。', ready: true }));
 
 ipcMain.on('restart-app', () => {
@@ -289,21 +291,42 @@ ipcMain.handle('save-file', async (event, options, data) => {
 
 // Open Template File
 ipcMain.handle('open-template-file', async () => {
+  log.info('open-template-file IPC handler called');
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [{ name: 'Excelファイル', extensions: ['xlsx', 'xlsm', 'xls'] }],
   });
   if (canceled || filePaths.length === 0) {
+    log.info('open-template-file result:', { success: false, canceled: true });
     return { success: false, canceled: true };
   }
   const filePath = filePaths[0];
   try {
     const data = await fs.promises.readFile(filePath);
-    return { success: true, path: filePath, name: path.basename(filePath), data };
+    const result = { success: true, path: filePath, name: path.basename(filePath), data };
+    log.info('open-template-file result:', { success: result.success, path: result.path, name: result.name, data_length: result.data?.length });
+    return result;
   } catch (error) {
     log.error('Template Open Error:', error);
     return { success: false, error: error.message };
   }
+});
+
+// Open Roster File
+ipcMain.handle('open-roster-file', async () => {
+  log.info('open-roster-file IPC handler called');
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: [{ name: 'Excelファイル', extensions: ['xlsx', 'xlsm', 'xls'] }],
+  });
+  if (canceled || filePaths.length === 0) {
+    log.info('open-roster-file result:', { success: false, canceled: true });
+    return { success: false, canceled: true };
+  }
+  const filePath = filePaths[0];
+  const result = { success: true, path: filePath, name: path.basename(filePath) };
+  log.info('open-roster-file result:', { success: result.success, path: result.path, name: result.name });
+  return result;
 });
 
 // Open File in Shell
@@ -319,19 +342,116 @@ ipcMain.handle('open-file', async (event, filePath) => {
 
 // Run Python Script
 ipcMain.handle('run-python-script', async (event, { args }) => {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const tempDir = app.getPath('temp');
-    const tempFileName = `${uuidv4()}.json`;
-    const tempFilePath = path.join(tempDir, tempFileName);
+    const tempInputFileName = `${uuidv4()}.json`;
+    const tempInputFilePath = path.join(tempDir, tempInputFileName);
+    const tempOutputFileName = `${uuidv4()}.json`;
+    const tempOutputFilePath = path.join(tempDir, tempOutputFileName);
+
+    const scriptName = 'excel_handler';
+    let scriptPath;
+    if (isDev) {
+      scriptPath = path.join(__dirname, `${scriptName}.py`);
+    } else {
+      const unpackedDir = __dirname.replace('app.asar', 'app.asar.unpacked');
+      scriptPath = path.join(unpackedDir, 'dist', scriptName, `${scriptName}.exe`);
+    }
+
+    if (!fs.existsSync(scriptPath)) {
+      const errorMsg = `Script not found: ${scriptPath}`;
+      log.error(errorMsg);
+      return resolve({ success: false, error: errorMsg });
+    }
+
+    fs.writeFile(tempInputFilePath, JSON.stringify(args), 'utf8', (err) => {
+      if (err) {
+        log.error('Failed to write temp input file for python script:', err);
+        return resolve({ success: false, error: '一時ファイルの作成に失敗しました。' });
+      }
+
+      let command;
+      let argsForSpawn;
+
+      if (isDev) {
+        command = 'python';
+        argsForSpawn = [scriptPath, tempInputFilePath, tempOutputFilePath];
+      } else {
+        command = 'cmd.exe';
+        argsForSpawn = ['/c', `chcp 65001 > nul && "${scriptPath}" "${tempInputFilePath}" "${tempOutputFilePath}"`];
+      }
+
+      log.info(`Python command: ${command}`);
+      log.info(`Python arguments: ${argsForSpawn.join(' ')}`);
+      const pyProcess = spawn(command, argsForSpawn, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: true,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      });
+
+      let stderr = '';
+
+      pyProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      pyProcess.on('close', async (code) => {
+        if (stderr) {
+          log.error(`Python script stderr: ${stderr}`);
+        }
+        if (code !== 0) {
+          log.error(`Python script exited with code ${code}`);
+          return resolve({ success: false, error: `スクリプトの実行に失敗しました。詳細はログを確認してください。\n${stderr}` });
+        }
+
+        try {
+          if (fs.existsSync(tempOutputFilePath)) {
+            const fileContent = await fs.promises.readFile(tempOutputFilePath, 'utf8');
+            const result = JSON.parse(fileContent);
+            resolve(result);
+          } else {
+            throw new Error('Python script did not create an output file.');
+          }
+        } catch (e) {
+          log.error('Failed to read or parse python script output file:', e);
+          resolve({ success: false, error: 'スクリプトからの応答の解析に失敗しました。' });
+        } finally {
+            if (fs.existsSync(tempInputFilePath)) {
+                fs.unlink(tempInputFilePath, (unlinkErr) => {
+                    if (unlinkErr) log.error(`Failed to delete temp input file: ${unlinkErr}`);
+                });
+            }
+            if (fs.existsSync(tempOutputFilePath)) {
+                fs.unlink(tempOutputFilePath, (unlinkErr) => {
+                    if (unlinkErr) log.error(`Failed to delete temp output file: ${unlinkErr}`);
+                });
+            }
+        }
+      });
+
+      pyProcess.on('error', (spawnError) => {
+        log.error(`Failed to start python script process: ${spawnError.message}`);
+        resolve({ success: false, error: `Pythonプロセスの開始に失敗しました: ${spawnError.message}` });
+      });
+    });
+  });
+});
+
+// Read Roster File
+ipcMain.handle('read-roster-file', async (event, { filePath, sheetName, column, hasHeader }) => {
+  return new Promise((resolve) => {
+    const tempDir = app.getPath('temp');
+    const tempInputFileName = `${uuidv4()}.json`;
+    const tempInputFilePath = path.join(tempDir, tempInputFileName);
+    const tempOutputFileName = `${uuidv4()}.json`; // New temp file for output
+    const tempOutputFilePath = path.join(tempDir, tempOutputFileName); // New temp file for output
 
     // Determine python script path
     const scriptName = 'excel_handler';
     let scriptPath;
     if (isDev) {
-      // In development, run the .py script directly
       scriptPath = path.join(__dirname, `${scriptName}.py`);
     } else {
-      // In production, run the executable
       const unpackedDir = app.getAppPath().replace('.asar', '.asar.unpacked');
       scriptPath = path.join(unpackedDir, 'dist', scriptName, `${scriptName}.exe`);
     }
@@ -342,62 +462,98 @@ ipcMain.handle('run-python-script', async (event, { args }) => {
         return resolve({ success: false, error: errorMsg });
     }
 
-    fs.writeFile(tempFilePath, JSON.stringify(args), 'utf8', (err) => {
+    const args = {
+      action: 'read_roster', // 新しいアクションを追加
+      file_path: filePath,
+      sheet_name: sheetName,
+      column: column,
+      has_header: hasHeader, // hasHeaderを追加
+      log_dir: app.getPath('userData') + '\\logs' // 追加
+    };
+
+    fs.writeFile(tempInputFilePath, JSON.stringify(args), 'utf8', (err) => {
       if (err) {
-        log.error('Failed to write temp file for python script:', err);
+        log.error('Failed to write temp input file for python script:', err);
         return resolve({ success: false, error: '一時ファイルの作成に失敗しました。' });
       }
 
-      log.info(`Determined scriptPath: ${scriptPath}`);
       let command;
       let argsForSpawn;
 
       if (isDev) {
         command = 'python';
-        argsForSpawn = [scriptPath, tempFilePath];
+        argsForSpawn = [scriptPath, tempInputFilePath, tempOutputFilePath]; // Pass output file path
       } else {
-        command = scriptPath; // scriptPath is the path to the .exe
-        argsForSpawn = [tempFilePath];
+        command = 'cmd.exe';
+        argsForSpawn = ['/c', `chcp 65001 > nul && "${scriptPath}" "${tempInputFilePath}" "${tempOutputFilePath}"`]; // Pass output file path
       }
       
-      log.info(`Python command: ${command}`);
-      log.info(`Python arguments: ${argsForSpawn.join(' ')}`);
-      log.info(`Is development mode: ${isDev}`);
+      const pyProcess = spawn(command, argsForSpawn, {
+        stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr
+        shell: true, // Enable shell execution to process 'chcp' command
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' } // Keep PYTHONIOENCODING for good measure
+      });
 
-      const pyProcess = spawn(command, argsForSpawn);
+      log.info(`Python process spawned with PID: ${pyProcess.pid}`);
 
       let stdout = '';
       let stderr = '';
 
       pyProcess.stdout.on('data', (data) => {
-        stdout += data.toString();
+        stdout += data.toString('utf8');
+        log.info(`Python stdout (partial): ${data.toString('utf8').trim()}`);
       });
 
       pyProcess.stderr.on('data', (data) => {
-        stderr += data.toString();
+        stderr += data.toString('utf8');
+        log.error(`Python stderr (partial): ${data.toString('utf8').trim()}`);
       });
 
-      pyProcess.on('close', (code) => {
+      pyProcess.on('close', async (code) => { // Made async to use await for file operations
+        log.info(`Python process exited with code: ${code}`);
         if (stderr) {
-          log.error(`Python script stderr: ${stderr}`);
+          log.error(`Python script stderr (full): ${stderr}`);
         }
-        if (code !== 0) {
-          log.error(`Python script exited with code ${code}`);
-          return resolve({ success: false, error: `スクリプトの実行に失敗しました。詳細はログを確認してください。
-${stderr}` });
-        }
+
+        // Read output from file instead of stdout
+        let result = { success: false, error: 'スクリプトからの応答の解析に失敗しました。' };
         try {
-          const result = JSON.parse(stdout);
-          resolve(result);
+          if (fs.existsSync(tempOutputFilePath)) {
+            const fileContent = await fs.promises.readFile(tempOutputFilePath, 'utf8');
+            result = JSON.parse(fileContent);
+            log.info(`Python script output (parsed from file): ${JSON.stringify(result)}`);
+          } else {
+            log.error(`Python output file not found: ${tempOutputFilePath}`);
+            result.error = `Pythonスクリプトが結果ファイルを生成しませんでした。`;
+          }
         } catch (e) {
-          log.error('Failed to parse python script output:', e, `
-Raw output: ${stdout}`);
-          resolve({ success: false, error: 'スクリプトからの応答の解析に失敗しました。' });
+          log.error('Failed to parse python script output from file:', e, `\nRaw file content: ${fileContent}`);
+          result.error = 'スクリプトからの応答の解析に失敗しました。' + e.message;
+        } finally {
+            // Clean up temp files
+            if (fs.existsSync(tempInputFilePath)) {
+                fs.unlink(tempInputFilePath, (unlinkErr) => {
+                    if (unlinkErr) log.error(`Failed to delete temp input file: ${unlinkErr}`);
+                });
+            }
+            if (fs.existsSync(tempOutputFilePath)) {
+                fs.unlink(tempOutputFilePath, (unlinkErr) => {
+                    if (unlinkErr) log.error(`Failed to delete temp output file: ${unlinkErr}`);
+                });
+            }
         }
+
+        if (code !== 0) {
+          log.error(`Python script exited with code ${code}. Full stdout: ${stdout}. Full stderr: ${stderr}`);
+          result.success = false;
+          result.error = result.error || `スクリプトの実行に失敗しました。詳細はログを確認してください。\n${stderr}`; // Use existing error or default
+        }
+        resolve(result);
       });
 
       pyProcess.on('error', (spawnError) => {
-        log.error('Failed to start python script:', spawnError);
+        log.error(`Failed to start python script process: ${spawnError.message}`);
+        log.error(`Python spawn error details: ${JSON.stringify(spawnError)}`);
         resolve({ success: false, error: `Pythonプロセスの開始に失敗しました: ${spawnError.message}` });
       });
     });

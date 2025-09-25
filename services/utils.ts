@@ -143,12 +143,10 @@ export async function withRetry<T>(
  * @param sheetName The name of the sheet to write to.
  * @returns The JSON object formatted for the excel_handler.exe.
  */
-export const transformTimecardJsonForExcelHandler = (timecardJson: any, templatePath: string, sheetName: string): any => {
+export const transformTimecardJsonForExcelHandler = (timecardJson: any, templatePath: string, sheetName: string, dataStartCell: string): any => {
   // Extract main data and convert it to a 2D array for the Excel sheet.
   // Null values are converted to empty strings.
   const dayData = timecardJson.days.map((day: any) => [
-    day.date || '',
-    day.dayOfWeek || '',
     day.morningStart || '',
     day.morningEnd || '',
     day.afternoonStart || '',
@@ -156,28 +154,19 @@ export const transformTimecardJsonForExcelHandler = (timecardJson: any, template
   ]);
 
   // Define the operations for the excel_handler.
-  // This includes writing the title, name, and the main timecard data.
-  // We assume a standard layout: Year/Month in C2, Name in C3, and daily data starting in B8.
+  // ユーザーが指定した開始セルから勤怠データのみを書き込む
   const operations = [
     {
       sheet_name: sheetName,
-      data: [[timecardJson.title.yearMonth]],
-      start_cell: 'C2',
-    },
-    {
-      sheet_name: sheetName,
-      data: [[timecardJson.title.name]],
-      start_cell: 'C3',
-    },
-    {
-      sheet_name: sheetName,
       data: dayData,
-      start_cell: 'B8',
+      start_cell: dataStartCell,
+      column_offsets: [0, 1, 0, 0], // morningStart, morningEnd, (skip 1 column), afternoonStart, afternoonEnd
     },
   ];
 
   // Construct the final JSON object in the expected format.
   const excelHandlerJson = {
+    action: 'write_template',
     template_path: templatePath,
     operations: operations,
   };

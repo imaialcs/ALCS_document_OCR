@@ -13,8 +13,9 @@
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx"
+    "noEmit": false,
+    "jsx": "react-jsx",
+    "outDir": "dist"
   },
   "include": [
     "**/*.ts",
@@ -22,7 +23,8 @@
     "./electron.d.ts",
     "./declarations.d.ts",
     "vite-env.d.ts",
-    "vite.electron.config.ts"
+    "vite.electron.config.ts",
+    "preload.ts"
   ],
-  "exclude": ["node_modules", "dist", "dist-electron", "release", "main.js", "preload.js"]
+  "exclude": ["node_modules", "dist", "dist-electron", "release", "main.js"]
 }
