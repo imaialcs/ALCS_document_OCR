@@ -6,6 +6,7 @@ declare global {
   interface Window {
     electronAPI: {
       invokeGeminiOcr: (pages: { base64: string; mimeType: string; name: string }[]) => Promise<ProcessedData[]>;
+      processImageForOcr: (arrayBuffer: ArrayBuffer, options: { isAutocropEnabled: boolean, isContrastAdjustmentEnabled: boolean }) => Promise<{ base64: string; mimeType: string }>;
       saveFile: (options: any, data: Uint8Array) => Promise<{ success: boolean; path?: string; error?: string; canceled?: boolean; }>;
       runPythonScript: (options: any) => Promise<{ success: boolean; message?: string; error?: string; }>;
       openTemplateFile: () => Promise<{ success: boolean; path?: string; name?: string; data?: any; error?: string; canceled?: boolean; }>;

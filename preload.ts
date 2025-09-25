@@ -1,11 +1,12 @@
-// preload.js
 const { contextBridge, ipcRenderer } = require('electron');
 
-// レンダラープロセス（UI側）の `window` オブジェクトに、安全なAPIを公開します。
-contextBridge.exposeInMainWorld('electronAPI', {
-  // --- Secure Gemini OCR Invocation ---
-  invokeGeminiOcr: (pages: any[]) => ipcRenderer.invoke('invoke-gemini-ocr', pages),
+try {
+  contextBridge.exposeInMainWorld('electronAPI', {
+    // --- Secure Gemini OCR Invocation ---
+    invokeGeminiOcr: (pages: { base64: string; mimeType: string; name: string }[]) => ipcRenderer.invoke('invoke-gemini-ocr', pages),
 
+      // --- Image Preprocessing API ---
+      processImageForOcr: (arrayBuffer: ArrayBuffer, options: { isAutocropEnabled: boolean, isContrastAdjustmentEnabled: boolean }) => ipcRenderer.invoke('process-image-for-ocr', arrayBuffer, options),
   // --- File Save API ---
   saveFile: (options: Electron.SaveDialogOptions, data: Uint8Array) => ipcRenderer.invoke('save-file', options, data),
 
@@ -42,4 +43,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showContextMenu: () => ipcRenderer.send('show-context-menu'),
 
   setMenu: (template: any[]) => ipcRenderer.invoke('set-menu', template)
-});
+  });
+} catch (error) {
+  console.error("Error exposing electronAPI in preload:", error);
+}

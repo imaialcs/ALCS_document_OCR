@@ -4,6 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
+const Jimp = require('jimp'); // Add Jimp import
+const { Buffer } = require('buffer'); // Add Buffer import
 
 // Initialize electron-log to capture renderer console
 log.initialize({ spyRendererConsole: true });
@@ -261,6 +263,46 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
     }
   }
   return results;
+});
+
+// --- Image Preprocessing Function (moved from preload) ---
+/**
+ * Processes an image using Jimp for optimization before sending to an OCR API.
+ * - Resizes the image to a max width/height of 1200px.
+ * - Sets a standard quality for compression.
+ * @param arrayBuffer The raw image data.
+ * @param options Options to control preprocessing.
+ * @returns A promise that resolves to the processed image as a base64 string and its mime type.
+ */
+const processImageWithJimp = async (arrayBuffer, options) => {
+  try {
+    const image = await Jimp.read(Buffer.from(arrayBuffer));
+    
+    if (options.isAutocropEnabled) {
+      image.autocrop();
+    }
+
+    if (options.isContrastAdjustmentEnabled) {
+      image.contrast(0.2);
+    }
+
+    image.scaleToFit(1200, 1200);
+    image.quality(85);
+
+    const mimeType = Jimp.MIME_JPEG;
+    const base64 = await image.getBase64Async(mimeType);
+
+    return { base64: base64.split(',')[1], mimeType };
+
+  } catch (error) {
+    log.error("Error processing image with Jimp in main process:", error);
+    throw new Error("画像の前処理中にエラーが発生しました。");
+  }
+};
+
+// IPC handler for image preprocessing
+ipcMain.handle('process-image-for-ocr', async (event, arrayBuffer, options) => {
+  return processImageWithJimp(arrayBuffer, options);
 });
 
 // Save File
