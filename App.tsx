@@ -623,7 +623,17 @@ const App = () => {
           console.log(`[handleProcess] Sending ${pagesToProcess.length} page(s) to Gemini for OCR.`);
           const result = await withRetry(() => processDocumentPages(pagesToProcess));
           console.log(`[handleProcess] Received ${result.length} data items from Gemini.`);
-          allExtractedData.push(...result);
+          
+          // Associate sourceImageBase64 with each processed item
+          const processedDataWithSource = result.map((item, resIndex) => {
+            // Assuming a 1-to-1 or 1-to-many mapping from page to processed items.
+            // For simplicity, we'll associate the base64 of the first page processed
+            // with all results from that batch. A more complex mapping might be needed
+            // if Gemini returns specific page numbers for each item.
+            const sourcePage = pagesToProcess[0]; // Get the first page's base64 for now
+            return { ...item, sourceImageBase64: `data:${sourcePage.mimeType};base64,${sourcePage.base64}` };
+          });
+          allExtractedData.push(...processedDataWithSource);
         }
       }
 
@@ -1405,7 +1415,16 @@ const App = () => {
                 <div className="space-y-8">
                   {processedData.map((item, index) => {
                     return (
-                    <div key={index} className="flex items-start gap-2 border-t pt-6 first:border-t-0 first:pt-0">
+                    <div key={index} className="flex flex-col sm:flex-row items-start gap-4 border-t pt-6 first:border-t-0 first:pt-0">
+                      {item.sourceImageBase64 && (
+                        <div className="flex-shrink-0 w-full sm:w-1/3 lg:w-1/4 p-2 border rounded-md bg-gray-50">
+                          <p className="text-sm font-medium text-gray-700 mb-1">
+                            読み取り元: 
+                            {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
+                          </p>
+                          <img src={item.sourceImageBase64} alt="Source Document" className="max-w-full h-auto object-contain" />
+                        </div>
+                      )}
                       <div className="flex-grow">
                         {item.type === 'table' ? (
                           <>

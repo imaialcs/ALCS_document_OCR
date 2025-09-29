@@ -7,12 +7,14 @@ export interface ProcessedTable {
   headers: string[];
   data: string[][];
   nameCorrected?: boolean;
+  sourceImageBase64?: string;
 }
 
 export interface ProcessedText {
   type: 'transcription';
   fileName: string;
   content: string;
+  sourceImageBase64?: string;
 }
 
 export interface TimecardDay {
@@ -32,6 +34,7 @@ export interface ProcessedTimecard {
   };
   days: TimecardDay[];
   nameCorrected?: boolean;
+  sourceImageBase64?: string;
 }
 
 export type ProcessedData = ProcessedTable | ProcessedText | ProcessedTimecard;
