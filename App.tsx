@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay } from './types';
 import { withRetry, transformTimecardJsonForExcelHandler, readFileAsArrayBuffer } from './services/utils';
-import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UserCircleIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon, AdjustmentsHorizontalIcon } from './components/icons';
+import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UserCircleIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon, AdjustmentsHorizontalIcon, RotateLeftIcon, RotateRightIcon } from './components/icons';
 import DataTable from './components/DataTable';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
 import * as XLSX from 'xlsx';
@@ -653,7 +653,9 @@ const App = () => {
               type: 'timecard',
               title: { yearMonth: String(card.title?.yearMonth ?? ""), name: String(card.title?.name ?? "") },
               days: Array.isArray(card.days) ? card.days : [],
-              nameCorrected: card.nameCorrected
+              nameCorrected: card.nameCorrected,
+              sourceImageBase64: card.sourceImageBase64,
+              rotation: 0
             };
             if (roster.length > 0) {
                 const bestMatch = findBestMatch(sanitizedCard.title.name, roster);
@@ -682,7 +684,9 @@ const App = () => {
             const sanitizedCard: ProcessedTable = { 
               type: 'table',
               title: { yearMonth: String(card.title?.yearMonth ?? ""), name: String(card.title?.name ?? "") },
-              headers: sanitizedHeaders, data: sanitizedData
+              headers: sanitizedHeaders, data: sanitizedData,
+              sourceImageBase64: card.sourceImageBase64,
+              rotation: 0
             };
             
             if (roster.length > 0) {
@@ -695,7 +699,11 @@ const App = () => {
             }
             return sanitizedCard;
           } else if (item.type === 'transcription') {
-            return item as ProcessedText;
+            const card: ProcessedText = {
+              ...(item as ProcessedText),
+              rotation: 0,
+            };
+            return card;
           }
           return null;
         }).filter((card): card is ProcessedData => card !== null);
@@ -745,6 +753,7 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
+      if (!item) return newData;
       if (item.type === 'table' && item.data[rowIndex]) {
         item.data[rowIndex][cellIndex] = value;
       } else if (item.type === 'timecard' && item.days && item.days[rowIndex]) { // タイムカード形式でも既存の行のみを更新
@@ -763,6 +772,7 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
+      if (!item) return newData;
       if (item.type === 'transcription') {
         item.content = value;
       }
@@ -774,6 +784,7 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
+      if (!item) return newData;
       if ((item.type === 'table' || item.type === 'timecard') && item.title) {
         item.title[field] = value;
         if (field === 'name') {
@@ -800,10 +811,26 @@ const App = () => {
     });
   };
 
+  const handleRotateImage = (cardIndex: number, direction: 'left' | 'right') => {
+    setProcessedData(prevData => {
+      const newData = [...prevData];
+      const item = newData[cardIndex];
+      if (item) {
+        const currentRotation = item.rotation || 0;
+        const newRotation = direction === 'right' 
+          ? (currentRotation + 90) % 360
+          : (currentRotation - 90 + 360) % 360;
+        newData[cardIndex] = { ...item, rotation: newRotation };
+      }
+      return newData;
+    });
+  };
+
   const handleRowCreate = (cardIndex: number, rowIndex: number, amount: number) => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
+      if (!item) return newData;
       if (item.type === 'timecard' && item.days) {
         // 新しい空の行を挿入
         const newEmptyRow = {
@@ -824,6 +851,7 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
+      if (!item) return newData;
       if (item.type === 'timecard' && item.days) {
         item.days.splice(rowIndex, amount);
       } else if (item.type === 'table' && item.data) {
@@ -837,6 +865,7 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
+      if (!item) return newData;
       if (item.type === 'table' && item.headers && item.data) {
         // ヘッダーに新しい列を追加
         for (let i = 0; i < amount; i++) {
@@ -857,6 +886,7 @@ const App = () => {
     setProcessedData(prevData => {
       const newData = JSON.parse(JSON.stringify(prevData));
       const item = newData[cardIndex];
+      if (!item) return newData;
       if (item.type === 'table' && item.headers && item.data) {
         // ヘッダーから列を削除
         item.headers.splice(colIndex, amount);
@@ -1002,7 +1032,7 @@ const App = () => {
             const textItem = item as ProcessedText;
             const wb = XLSX.utils.book_new();
             const sheetName = textItem.fileName.replace(/\.[^/.]+$/, "").substring(0, 31) || 'Transcription';
-            const ws_data = [[textItem.content]]; // Put content in a single cell
+            const ws_data = [[item.content]]; // Put content in a single cell
             const ws = XLSX.utils.aoa_to_sheet(ws_data);
             XLSX.utils.book_append_sheet(wb, ws, sheetName);
             const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -1225,7 +1255,7 @@ const App = () => {
 
   return (
     <div className="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8" onContextMenu={handleContextMenu}>
-      <div className="w-full max-w-6xl mx-auto">
+      <div className="w-full mx-auto">
         <header className="text-center mb-8">
           <h1 className="text-3xl sm:text-4xl font-bold text-gray-800">ALCS文書OCR</h1>
           <p className="mt-2 text-sm text-gray-600 leading-relaxed">
@@ -1415,17 +1445,34 @@ const App = () => {
                 <div className="space-y-8">
                   {processedData.map((item, index) => {
                     return (
-                    <div key={index} className="flex flex-col sm:flex-row items-start gap-4 border-t pt-6 first:border-t-0 first:pt-0">
+                    <div key={index} className="flex flex-row justify-center items-start gap-4 border-t pt-6 first:border-t-0 first:pt-0">
                       {item.sourceImageBase64 && (
-                        <div className="flex-shrink-0 w-full sm:w-1/3 lg:w-1/4 p-2 border rounded-md bg-gray-50">
-                          <p className="text-sm font-medium text-gray-700 mb-1">
-                            読み取り元: 
-                            {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
-                          </p>
-                          <img src={item.sourceImageBase64} alt="Source Document" className="max-w-full h-auto object-contain" />
+                        <div className="p-2 border rounded-md bg-gray-50" style={{ maxWidth: '50vw' }}>
+                          <div className="flex justify-between items-center mb-1">
+                            <p className="text-sm font-medium text-gray-700 truncate">
+                              読み取り元: 
+                              {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
+                            </p>
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => handleRotateImage(index, 'left')} className="p-1 rounded-full hover:bg-gray-200" title="左に90度回転">
+                                <RotateLeftIcon className="w-4 h-4 text-gray-600" />
+                              </button>
+                              <button onClick={() => handleRotateImage(index, 'right')} className="p-1 rounded-full hover:bg-gray-200" title="右に90度回転">
+                                <RotateRightIcon className="w-4 h-4 text-gray-600" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="w-full bg-gray-200">
+                            <img 
+                              src={item.sourceImageBase64} 
+                              alt="Source Document" 
+                              className="w-full object-contain transition-transform duration-200"
+                              style={{ transform: `rotate(${item.rotation || 0}deg)`, maxHeight: '700px' }}
+                            />
+                          </div>
                         </div>
                       )}
-                      <div className="flex-grow">
+                      <div className="min-w-0 overflow-x-auto">
                         {item.type === 'table' ? (
                           <>
                             <div className="flex flex-wrap justify-between items-center gap-2 mb-2">

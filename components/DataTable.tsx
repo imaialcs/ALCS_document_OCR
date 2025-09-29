@@ -74,9 +74,11 @@ const DataTable: React.FC<{
         data={safeData}
         colHeaders={safeHeaders}
         rowHeaders={true}
-        width="auto"
         height="auto"
-        stretchH="all"
+        stretchH="none"
+        autoColumnSize={{
+          useHeaders: true,
+        }}
         contextMenu={{
           items: {
             row_above: {
