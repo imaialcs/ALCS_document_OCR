@@ -1,4 +1,4 @@
-('c:\\Users\\alcs\\Downloads\\ALCS文書OCR\\build\\excel_handler\\PYZ-00.pyz',
+('C:\\Users\\alcs\\Downloads\\ALCS文書OCR\\build\\excel_handler\\PYZ-00.pyz',
  [('__future__',
    'C:\\Users\\alcs\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\__future__.py',
    'PYMODULE'),

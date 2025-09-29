@@ -3,6 +3,8 @@ import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay } from './types';
 import { withRetry, transformTimecardJsonForExcelHandler, readFileAsArrayBuffer } from './services/utils';
 import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UserCircleIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon, AdjustmentsHorizontalIcon, RotateLeftIcon, RotateRightIcon } from './components/icons';
+import { Allotment } from "allotment";
+import "allotment/dist/style.css";
 import DataTable from './components/DataTable';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
 import * as XLSX from 'xlsx';
@@ -257,6 +259,7 @@ const App = () => {
   const [modalPreview, setModalPreview] = useState<FilePreview | null>(null);
   const [hasScrolledToResults, setHasScrolledToResults] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const [tokenUsage, setTokenUsage] = useState<{ promptTokens: number, outputTokens: number } | null>(null);
   
   const [updateStatus, setUpdateStatus] = useState<{ message: string; ready?: boolean; transient?: boolean } | null>(null);
   const updateTimeoutRef = useRef<number | null>(null);
@@ -533,11 +536,13 @@ const App = () => {
     setLoading(true);
     setError(null);
     setProcessedData([]);
+    setTokenUsage(null);
     setHasScrolledToResults(false);
     cancelProcessingRef.current = false;
     setIsCancelling(false);
     
     let allExtractedData: ProcessedData[] = [];
+    let aggregatedUsage = { promptTokens: 0, outputTokens: 0 };
 
     try {
       for (const [index, p] of previews.entries()) {
@@ -621,7 +626,13 @@ const App = () => {
 
         if (pagesToProcess.length > 0) {
           console.log(`[handleProcess] Sending ${pagesToProcess.length} page(s) to Gemini for OCR.`);
-          const result = await withRetry(() => processDocumentPages(pagesToProcess));
+          const { data: result, usage } = await withRetry(() => processDocumentPages(pagesToProcess));
+          
+          if (usage) {
+            aggregatedUsage.promptTokens += usage.promptTokens;
+            aggregatedUsage.outputTokens += usage.outputTokens;
+          }
+
           console.log(`[handleProcess] Received ${result.length} data items from Gemini.`);
           
           // Associate sourceImageBase64 with each processed item
@@ -636,6 +647,8 @@ const App = () => {
           allExtractedData.push(...processedDataWithSource);
         }
       }
+
+      setTokenUsage(aggregatedUsage);
 
       if (cancelProcessingRef.current) {
         setLoading(false);
@@ -1259,11 +1272,10 @@ const App = () => {
         <header className="text-center mb-8">
           <h1 className="text-3xl sm:text-4xl font-bold text-gray-800">ALCS文書OCR</h1>
           <p className="mt-2 text-sm text-gray-600 leading-relaxed">
-            画像(PNG, JPG)やPDFをアップロードすると、AIが内容を読み取りデータ化します。<br />
-            認識結果は画面上で修正でき、Excelファイルとしてダウンロード可能です。<br />
-            <span className="font-semibold text-blue-600">画像の向きを正すと、読み取り精度が向上します。</span><br />
-            <span className="font-semibold text-orange-600">※PDFは画像に変換して処理しますが、ファイルサイズが大きいと時間がかかるため、画像ファイルの利用をお勧めします。</span><br />
-
+            画像(PNG, JPG, PDF)をアップロードすると、AIが内容を読み取りデータ化します。<br />
+            認識結果は画面上で修正し、Excelファイルとしてダウンロード可能です。<br />
+            <span className="font-semibold text-blue-600">【ヒント】</span>
+            <span className="text-gray-700">画像の向きを正したり、仕切り線をドラッグして幅を調整すると、より快適に利用できます。</span>
           </p>
         </header>
 
@@ -1442,125 +1454,141 @@ const App = () => {
                     </button>
                   </div>
                 </div>
+
+                {tokenUsage && (tokenUsage.promptTokens > 0 || tokenUsage.outputTokens > 0) && (
+                  <div className="text-xs text-gray-500 my-2 p-2 bg-gray-50 rounded-md">
+                    <p className="font-semibold">APIトークン使用量 (参考値):</p>
+                    <p>・入力: {tokenUsage.promptTokens.toLocaleString()} トークン</p>
+                    <p>・出力: {tokenUsage.outputTokens.toLocaleString()} トークン</p>
+                  </div>
+                )}
+
                 <div className="space-y-8">
                   {processedData.map((item, index) => {
                     return (
-                    <div key={index} className="flex flex-row justify-center items-start gap-4 border-t pt-6 first:border-t-0 first:pt-0">
-                      {item.sourceImageBase64 && (
-                        <div className="p-2 border rounded-md bg-gray-50" style={{ maxWidth: '50vw' }}>
-                          <div className="flex justify-between items-center mb-1">
-                            <p className="text-sm font-medium text-gray-700 truncate">
-                              読み取り元: 
-                              {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
-                            </p>
-                            <div className="flex items-center gap-1">
-                              <button onClick={() => handleRotateImage(index, 'left')} className="p-1 rounded-full hover:bg-gray-200" title="左に90度回転">
-                                <RotateLeftIcon className="w-4 h-4 text-gray-600" />
-                              </button>
-                              <button onClick={() => handleRotateImage(index, 'right')} className="p-1 rounded-full hover:bg-gray-200" title="右に90度回転">
-                                <RotateRightIcon className="w-4 h-4 text-gray-600" />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="w-full bg-gray-200">
-                            <img 
-                              src={item.sourceImageBase64} 
-                              alt="Source Document" 
-                              className="w-full object-contain transition-transform duration-200"
-                              style={{ transform: `rotate(${item.rotation || 0}deg)`, maxHeight: '700px' }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                      <div className="min-w-0 overflow-x-auto">
-                        {item.type === 'table' ? (
-                          <>
-                            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                    <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
-                                    <span className="text-gray-500">-</span>
-                                    <div className="flex items-center gap-1.5 flex-grow">
-                                        {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                        <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のテーブルをダウンロード`}>
-                                        <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                        Excelでダウンロード
-                                    </button>
-                                </div>
-                            </div>
-                            <DataTable 
-                                cardIndex={index} 
-                                headers={item.headers}
-                                data={item.data}
-                                onDataChange={handleDataChange} 
-                                onRowCreate={handleRowCreate}
-                                onRowRemove={handleRowRemove}
-                                onColCreate={handleColCreate}
-                                onColRemove={handleColRemove}
-                            />
-                          </>
-                        ) : item.type === 'timecard' ? (
-                            <>
-                                <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                    <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                        <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
-                                        <span className="text-gray-500">-</span>
-                                        <div className="flex items-center gap-1.5 flex-grow">
-                                            {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                            <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        {outputMode === 'template' && excelTemplateFile?.path ? (
-                                            <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
-                                                <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                テンプレートに転記
-                                            </button>
-                                        ) : (
-                                            <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
-                                                <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                新規Excelでダウンロード
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                                <DataTable 
-                                    cardIndex={index} 
-                                    headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
-                                    data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
-                                    onDataChange={handleDataChange} 
-                                    onRowCreate={handleRowCreate}
-                                    onRowRemove={handleRowRemove}
-                                    onColCreate={handleColCreate}
-                                    onColRemove={handleColRemove}
-                                />                            </>
-                        ) : (
-                          <>
-                            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                    <DocumentTextIcon className="h-6 w-6 text-gray-600" />
-                                    <span>{item.fileName}</span>
-                                </div>
-                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
-                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                    Excelファイルで保存
-                                </button>
-                            </div>
-                            <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
-                          </>
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-1 pt-1">
+                    <div key={index} className="relative border-t pt-6 first:border-t-0 first:pt-0">
+                      <div className="absolute top-6 right-0 z-10 flex flex-col gap-1 pt-1">
                           <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
                               <ArrowUpIcon className="w-5 h-5 text-gray-700" />
                           </button>
                           <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
                               <ArrowDownIcon className="w-5 h-5 text-gray-700" />
                           </button>
-
+                      </div>
+                      <div style={{ height: 750 }}>
+                        <Allotment>
+                          <Allotment.Pane minSize={300}>
+                            {item.sourceImageBase64 && (
+                              <div className="h-full p-2 border rounded-md bg-gray-50 flex flex-col">
+                                <div className="flex justify-between items-center mb-1">
+                                  <p className="text-sm font-medium text-gray-700 truncate">
+                                    読み取り元: 
+                                    {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
+                                  </p>
+                                  <div className="flex items-center gap-1">
+                                    <button onClick={() => handleRotateImage(index, 'left')} className="p-1 rounded-full hover:bg-gray-200" title="左に90度回転">
+                                      <RotateLeftIcon className="w-4 h-4 text-gray-600" />
+                                    </button>
+                                    <button onClick={() => handleRotateImage(index, 'right')} className="p-1 rounded-full hover:bg-gray-200" title="右に90度回転">
+                                      <RotateRightIcon className="w-4 h-4 text-gray-600" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="w-full bg-gray-200 flex-grow min-h-0">
+                                  <img 
+                                    src={item.sourceImageBase64} 
+                                    alt="Source Document" 
+                                    className="w-full h-full object-contain transition-transform duration-200"
+                                    style={{ transform: `rotate(${item.rotation || 0}deg)`}}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </Allotment.Pane>
+                          <Allotment.Pane minSize={400}>
+                            <div className="h-full overflow-x-auto">
+                              {item.type === 'table' ? (
+                                <>
+                                  <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                          <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                          <span className="text-gray-500">-</span>
+                                          <div className="flex items-center gap-1.5 flex-grow">
+                                              {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                              <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                          </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                          <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のテーブルをダウンロード`}>
+                                              <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                              Excelでダウンロード
+                                          </button>
+                                      </div>
+                                  </div>
+                                  <DataTable 
+                                      cardIndex={index} 
+                                      headers={item.headers}
+                                      data={item.data}
+                                      onDataChange={handleDataChange} 
+                                      onRowCreate={handleRowCreate}
+                                      onRowRemove={handleRowRemove}
+                                      onColCreate={handleColCreate}
+                                      onColRemove={handleColRemove}
+                                  />
+                                </>
+                              ) : item.type === 'timecard' ? (
+                                  <>
+                                      <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                          <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                              <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                              <span className="text-gray-500">-</span>
+                                              <div className="flex items-center gap-1.5 flex-grow">
+                                                  {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                                  <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                              </div>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                              {outputMode === 'template' && excelTemplateFile?.path ? (
+                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
+                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                      テンプレートに転記
+                                                  </button>
+                                              ) : (
+                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
+                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                      新規Excelでダウンロード
+                                                  </button>
+                                              )}
+                                          </div>
+                                      </div>
+                                      <DataTable 
+                                          cardIndex={index} 
+                                          headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
+                                          data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
+                                          onDataChange={handleDataChange} 
+                                          onRowCreate={handleRowCreate}
+                                          onRowRemove={handleRowRemove}
+                                          onColCreate={handleColCreate}
+                                          onColRemove={handleColRemove}
+                                      />                            </>
+                              ) : (
+                                <>
+                                  <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                          <DocumentTextIcon className="h-6 w-6 text-gray-600" />
+                                          <span>{item.fileName}</span>
+                                      </div>
+                                      <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
+                                          <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                          Excelファイルで保存
+                                      </button>
+                                  </div>
+                                  <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
+                                </>
+                              )}
+                            </div>
+                          </Allotment.Pane>
+                        </Allotment>
                       </div>
                     </div>
                   )})

@@ -224,9 +224,9 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
       log.info('genAI object:', genAI);
       log.info('genAI.models object:', genAI.models);
       log.info('Before generateContent call');
-      log.info('generateContent arguments:', { model: 'gemini-2.5-flash', contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }], generationConfig: generationConfig });
+      log.info('generateContent arguments:', { model: 'gemini-flash-lite-latest', contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }], generationConfig: generationConfig });
       const result = await genAI.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-flash-lite-latest',
         contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }],
         generationConfig: generationConfig,
       });

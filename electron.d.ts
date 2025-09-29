@@ -5,7 +5,7 @@ import { ProcessedData } from './types';
 declare global {
   interface Window {
     electronAPI: {
-      invokeGeminiOcr: (pages: { base64: string; mimeType: string; name: string }[]) => Promise<ProcessedData[]>;
+      invokeGeminiOcr: (pages: { base64: string; mimeType: string; name: string }[]) => Promise<{ data: ProcessedData[], usage: { promptTokens: number, outputTokens: number } }>;
       processImageForOcr: (arrayBuffer: ArrayBuffer, options: { isAutocropEnabled: boolean, isContrastAdjustmentEnabled: boolean }) => Promise<{ base64: string; mimeType: string }>;
       saveFile: (options: any, data: Uint8Array) => Promise<{ success: boolean; path?: string; error?: string; canceled?: boolean; }>;
       runPythonScript: (options: any) => Promise<{ success: boolean; message?: string; error?: string; }>;
