@@ -30,6 +30,7 @@
     "handsontable": "^16.1.0",
     "jimp": "^0.22.0",
     "pdfjs-dist": "^4.4.168",
+    "re-resizable": "^6.11.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vite-plugin-node-polyfills": "^0.24.0",

@@ -8,6 +8,7 @@ export interface ProcessedTable {
   data: string[][];
   nameCorrected?: boolean;
   sourceImageBase64?: string;
+  rotation?: number;
 }
 
 export interface ProcessedText {
@@ -15,6 +16,7 @@ export interface ProcessedText {
   fileName: string;
   content: string;
   sourceImageBase64?: string;
+  rotation?: number;
 }
 
 export interface TimecardDay {
@@ -35,6 +37,7 @@ export interface ProcessedTimecard {
   days: TimecardDay[];
   nameCorrected?: boolean;
   sourceImageBase64?: string;
+  rotation?: number;
 }
 
 export type ProcessedData = ProcessedTable | ProcessedText | ProcessedTimecard;
