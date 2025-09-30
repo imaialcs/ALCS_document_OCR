@@ -638,11 +638,9 @@ const App = () => {
             
             // Associate sourceImageBase64 with each processed item
             const processedDataWithSource = result.map((item, resIndex) => {
-              // Assuming a 1-to-1 or 1-to-many mapping from page to processed items.
-              // For simplicity, we'll associate the base64 of the first page processed
-              // with all results from that batch. A more complex mapping might be needed
-              // if Gemini returns specific page numbers for each item.
-              const sourcePage = pagesToProcess[0]; // Get the first page's base64 for now
+              // Assuming a 1-to-1 correspondence between the order of pages processed
+              // and the order of results returned by processDocumentPages.
+              const sourcePage = pagesToProcess[resIndex]; // Get the corresponding page's base64
               return { ...item, sourceImageBase64: `data:${sourcePage.mimeType};base64,${sourcePage.base64}` };
             });
             allExtractedData.push(...processedDataWithSource);
@@ -729,26 +727,8 @@ const App = () => {
         throw new Error("AIは応答しましたが、期待されるデータ形式と一致しませんでした。ファイルが対応形式であることを確認してください。");
       }
 
-      const mergedDataMap = new Map<string, ProcessedTable>();
-      const finalData: ProcessedData[] = [];
-
-      sanitizedAndValidatedData.forEach(item => {
-        if (item.type === 'table') {
-            const key = `${item.title.name.replace(/\s+/g, '')}-${item.title.yearMonth.replace(/\s+/g, '')}`;
-            if (mergedDataMap.has(key)) {
-                const existingCard = mergedDataMap.get(key)!;
-                existingCard.data.push(...item.data);
-            } else {
-                mergedDataMap.set(key, JSON.parse(JSON.stringify(item)));
-            }
-        } else {
-            // For 'timecard' and 'transcription', just push them
-            finalData.push(item);
-        }
-      });
-
       if (!cancelProcessingRef.current) {
-        setProcessedData([...Array.from(mergedDataMap.values()), ...finalData]);
+        setProcessedData(sanitizedAndValidatedData);
       }
 
     } catch (e: any) {
