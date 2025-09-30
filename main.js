@@ -194,27 +194,8 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
 
   for (const page of pages) {
     try {
-      const prompt = `
-以下の画像から情報を抽出し、JSON形式で出力してください。
-画像が勤怠管理表やタイムカードの場合、以下のtimecard形式で出力してください。
-- type: "timecard"
-- title: { yearMonth: "YYYY年MM月", name: "氏名" }
-- days: [{ date: "D", dayOfWeek: "ddd", morningStart: "HH:mm", morningEnd: "HH:mm", afternoonStart: "HH:mm", afternoonEnd: "HH:mm" }]
-- morning/afternoonの時間は、出勤・退勤のペアがなければnullにしてください。
-
-画像が請求書や明細書などの表形式データの場合、以下のtable形式で出力してください。
-- type: "table"
-- title: { yearMonth: "YYYY年MM月", name: "件名や宛名" }
-- headers: ["ヘッダー1", "ヘッダー2", ...]
-- data: [["行1セル1", "行1セル2", ...], ["行2セル1", "行2セル2", ...]]
-
-上記いずれにも該当しない、または判断が難しい場合は、画像の内容を単純に文字起こしし、以下のtranscription形式で出力してください。
-- type: "transcription"
-- fileName: "元のファイル名"
-- content: "文字起こし結果"
-
-氏名や件名が読み取れない場合は、"不明"としてください。
-`;
+      log.info(`Starting OCR for file: ${page.name}`); // 処理開始ログを追加
+      const prompt = `画像から情報を抽出し、JSON形式で出力してください。画像が勤怠管理表やタイムカードの場合、timecard形式で出力: {"type":"timecard", "title":{"yearMonth":"YYYY年MM月", "name":"氏名"}, "days":[{"date":"D", "dayOfWeek":"ddd", "morningStart":"HH:mm", "morningEnd":"HH:mm", "afternoonStart":"HH:mm", "afternoonEnd":"HH:mm"}]}。timecardの時間は、出勤・退勤のペアがない場合nullにしてください。画像が請求書や明細書などの表形式データの場合、table形式で出力: {"type":"table", "title":{"yearMonth":"YYYY年MM月", "name":"件名や宛名"}, "headers":["ヘッダー1", "ヘッダー2", "..."], "data":[["行1セル1", "..."], ["行2セル1", "..."]]}。上記いずれにも該当しない場合は、transcription形式で出力: {"type":"transcription", "fileName":"元のファイル名", "content":"文字起こし結果"}。氏名や件名が読み取れない場合は、"不明"としてください。`;
       const imagePart = {
         inlineData: {
           data: page.base64,
@@ -222,10 +203,11 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
         },
       };
 
-      log.info('genAI object:', genAI);
-      log.info('genAI.models object:', genAI.models);
-      log.info('Before generateContent call');
-      log.info('generateContent arguments:', { model: 'gemini-flash-lite-latest', contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }], generationConfig: generationConfig });
+      // 冗長なデバッグログを削除
+      // log.info('genAI object:', genAI);
+      // log.info('genAI.models object:', genAI.models);
+      // log.info('Before generateContent call');
+      // log.info('generateContent arguments:', { model: 'gemini-flash-lite-latest', contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }], generationConfig: generationConfig });
       const result = await genAI.models.generateContent({
         model: 'gemini-flash-lite-latest',
         contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }],
@@ -235,11 +217,13 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
       if (result.usageMetadata) {
         aggregatedUsage.promptTokens += result.usageMetadata.promptTokenCount || 0;
         aggregatedUsage.outputTokens += result.usageMetadata.candidatesTokenCount || 0;
+        log.info(`OCR completed for ${page.name}. Usage: Prompt Tokens=${result.usageMetadata.promptTokenCount}, Output Tokens=${result.usageMetadata.candidatesTokenCount}`); // 処理完了とトークン使用量ログを追加
       }
       
-      log.info('After generateContent call. Raw result:', result);
-      log.info('Result has response property:', result && result.response !== undefined);
-      log.info('Type of result.response:', typeof (result && result.response));
+      // 冗長なデバッグログを削除
+      // log.info('After generateContent call. Raw result:', result);
+      // log.info('Result has response property:', result && result.response !== undefined);
+      // log.info('Type of result.response:', typeof (result && result.response));
       const rawText = result.candidates[0].content.parts[0].text;
       let jsonText = rawText;
 
