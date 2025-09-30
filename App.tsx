@@ -633,18 +633,22 @@ const App = () => {
             aggregatedUsage.outputTokens += usage.outputTokens;
           }
 
-          console.log(`[handleProcess] Received ${result.length} data items from Gemini.`);
-          
-          // Associate sourceImageBase64 with each processed item
-          const processedDataWithSource = result.map((item, resIndex) => {
-            // Assuming a 1-to-1 or 1-to-many mapping from page to processed items.
-            // For simplicity, we'll associate the base64 of the first page processed
-            // with all results from that batch. A more complex mapping might be needed
-            // if Gemini returns specific page numbers for each item.
-            const sourcePage = pagesToProcess[0]; // Get the first page's base64 for now
-            return { ...item, sourceImageBase64: `data:${sourcePage.mimeType};base64,${sourcePage.base64}` };
-          });
-          allExtractedData.push(...processedDataWithSource);
+          if (result && Array.isArray(result)) {
+            console.log(`[handleProcess] Received ${result.length} data items from Gemini.`);
+            
+            // Associate sourceImageBase64 with each processed item
+            const processedDataWithSource = result.map((item, resIndex) => {
+              // Assuming a 1-to-1 or 1-to-many mapping from page to processed items.
+              // For simplicity, we'll associate the base64 of the first page processed
+              // with all results from that batch. A more complex mapping might be needed
+              // if Gemini returns specific page numbers for each item.
+              const sourcePage = pagesToProcess[0]; // Get the first page's base64 for now
+              return { ...item, sourceImageBase64: `data:${sourcePage.mimeType};base64,${sourcePage.base64}` };
+            });
+            allExtractedData.push(...processedDataWithSource);
+          } else {
+            console.error('[handleProcess] Gemini processing returned invalid or empty data:', result);
+          }
         }
       }
 

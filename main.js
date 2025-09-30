@@ -190,6 +190,7 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
   };
 
   const results = [];
+  const aggregatedUsage = { promptTokens: 0, outputTokens: 0 };
 
   for (const page of pages) {
     try {
@@ -230,10 +231,33 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
         contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }],
         generationConfig: generationConfig,
       });
+      
+      if (result.usageMetadata) {
+        aggregatedUsage.promptTokens += result.usageMetadata.promptTokenCount || 0;
+        aggregatedUsage.outputTokens += result.usageMetadata.candidatesTokenCount || 0;
+      }
+      
       log.info('After generateContent call. Raw result:', result);
       log.info('Result has response property:', result && result.response !== undefined);
       log.info('Type of result.response:', typeof (result && result.response));
-      const jsonText = result.candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
+      const rawText = result.candidates[0].content.parts[0].text;
+      let jsonText = rawText;
+
+      // 1. Try to extract content from a markdown JSON block (```json ... ```)
+      const jsonBlockMatch = rawText.match(/```json\s*([\s\S]*?)\s*```/);
+      if (jsonBlockMatch && jsonBlockMatch[1]) {
+        jsonText = jsonBlockMatch[1].trim();
+      } else {
+        // 2. If no markdown block, try to find the content between the first '{' and the last '}'
+        const jsonObjectMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonObjectMatch) {
+          jsonText = jsonObjectMatch[0];
+        } else {
+          // 3. Fallback: remove all markdown fences and trim
+          jsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+        }
+      }
+
       const parsedData = JSON.parse(jsonText);
 
       const dataToProcess = Array.isArray(parsedData) ? parsedData : [parsedData];
@@ -262,7 +286,7 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
       throw new Error(`AI処理中にエラーが発生しました: ${error.message}`);
     }
   }
-  return results;
+  return { data: results, usage: aggregatedUsage };
 });
 
 // --- Image Preprocessing Function (moved from preload) ---
