@@ -10,6 +10,7 @@ const UpdateNotification = lazy(() => import('./components/UpdateNotification'))
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import owlIcon from '/owl.png';
 
 const getBasename = (filePath: string): string => {
   if (!filePath) return '';
@@ -1255,6 +1256,7 @@ const App = () => {
     <div className="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8" onContextMenu={handleContextMenu}>
       <div className="w-full mx-auto">
         <header className="text-center mb-8">
+          <img src={owlIcon} alt="アプリアイコン" className="w-10 h-10 mx-auto mb-4" />
           <h1 className="text-3xl sm:text-4xl font-bold text-gray-800">ALCS文書OCR</h1>
           <p className="mt-2 text-sm text-gray-600 leading-relaxed">
             画像(PNG, JPG, PDF)をアップロードすると、AIが内容を読み取りデータ化します。<br />
