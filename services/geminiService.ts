@@ -10,11 +10,12 @@ type OcrResponse = {
 };
 
 export const processDocumentPages = async (
-  pages: { base64: string; mimeType: string, name: string }[]
+  pages: { base64: string; mimeType: string, name: string }[],
+  documentType: string
 ): Promise<OcrResponse> => {
   if (window.electronAPI?.invokeGeminiOcr) {
     // The return type of invokeGeminiOcr should now match OcrResponse thanks to the updated d.ts file
-    return window.electronAPI.invokeGeminiOcr(pages);
+    return window.electronAPI.invokeGeminiOcr(pages, documentType);
   }
   throw new Error("OCR処理機能が利用できません。アプリケーションを再起動してください。");
 };

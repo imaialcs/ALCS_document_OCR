@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { HotTable } from '@handsontable/react-wrapper';
 import { registerAllModules } from 'handsontable/registry';
 import 'handsontable/styles/handsontable.min.css'; // Base CSS
@@ -25,10 +25,31 @@ const DataTable: React.FC<{
 }> = ({ cardIndex, headers, data, onDataChange, onRowCreate, onRowRemove, onColCreate, onColRemove }) => {
 
   const hotTableRef = useRef<HotTable>(null);
+  const [hiddenColumns, setHiddenColumns] = useState<number[]>([]);
+  const [columnVisibility, setColumnVisibility] = useState<{ [key: string]: boolean }>({});
 
   // Defensive check to ensure data and headers are always arrays
   const safeData = Array.isArray(data) ? data : [];
   const safeHeaders = Array.isArray(headers) ? headers : [];
+
+  useEffect(() => {
+    const initialVisibility = safeHeaders.reduce((acc, header) => {
+      acc[header] = true;
+      return acc;
+    }, {} as { [key: string]: boolean });
+    setColumnVisibility(initialVisibility);
+  }, [safeHeaders]);
+
+  useEffect(() => {
+    const newHiddenColumns = safeHeaders
+      .map((header, index) => (columnVisibility[header] === false ? index : -1))
+      .filter(index => index !== -1);
+    setHiddenColumns(newHiddenColumns);
+  }, [columnVisibility, safeHeaders]);
+
+  const handleColumnVisibilityChange = (header: string) => {
+    setColumnVisibility(prev => ({ ...prev, [header]: !prev[header] }));
+  };
 
   // Determine if this is a timecard table based on fixed headers
   const isTimecard = safeHeaders.length === 6 &&
@@ -69,6 +90,25 @@ const DataTable: React.FC<{
 
   return (
     <div className="hot-container">
+      <div className="mb-4 p-2 border rounded-md bg-gray-50">
+        <p className="text-sm font-medium text-gray-700 mb-2">表示する列を選択:</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-2">
+          {safeHeaders.map((header, index) => (
+            <div key={index} className="flex items-center">
+              <input
+                type="checkbox"
+                id={`col-toggle-${cardIndex}-${index}`}
+                checked={columnVisibility[header] ?? true}
+                onChange={() => handleColumnVisibilityChange(header)}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <label htmlFor={`col-toggle-${cardIndex}-${index}`} className="ml-2 text-sm text-gray-600">
+                {header}
+              </label>
+            </div>
+          ))}
+        </div>
+      </div>
       <HotTable
         ref={hotTableRef}
         data={safeData}
@@ -78,6 +118,10 @@ const DataTable: React.FC<{
         stretchH="none"
         autoColumnSize={{
           useHeaders: true,
+        }}
+        hiddenColumns={{
+          columns: hiddenColumns,
+          indicators: true
         }}
         contextMenu={{
           items: {

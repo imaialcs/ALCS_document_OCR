@@ -172,7 +172,7 @@ ipcMain.on('restart-app', () => {
 // --- IPC Handlers ---
 
 // Gemini OCR
-ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
+ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) {
     throw new Error('APIキーが.envファイルに設定されていません。');
@@ -194,8 +194,24 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages) => {
 
   for (const page of pages) {
     try {
-      log.info(`Starting OCR for file: ${page.name}`); // 処理開始ログを追加
-      const prompt = `画像から情報を抽出し、JSON形式で出力してください。画像が勤怠管理表やタイムカードの場合、timecard形式で出力: {"type":"timecard", "title":{"yearMonth":"YYYY年MM月", "name":"氏名"}, "days":[{"date":"D", "dayOfWeek":"ddd", "morningStart":"HH:mm", "morningEnd":"HH:mm", "afternoonStart":"HH:mm", "afternoonEnd":"HH:mm"}]}。timecardの時間は、出勤・退勤のペアがない場合nullにしてください。画像が請求書や明細書などの表形式データの場合、table形式で出力: {"type":"table", "title":{"yearMonth":"YYYY年MM月", "name":"件名や宛名"}, "headers":["ヘッダー1", "ヘッダー2", "..."], "data":[["行1セル1", "..."], ["行2セル1", "..."]]}。上記いずれにも該当しない場合は、transcription形式で出力: {"type":"transcription", "fileName":"元のファイル名", "content":"文字起こし結果"}。氏名や件名が読み取れない場合は、"不明"としてください。`;
+      log.info(`Starting OCR for file: ${page.name} with document type: ${documentType}`); // 処理開始ログを追加
+      
+      let prompt;
+      switch (documentType) {
+        case '領収書':
+          prompt = 'この画像は領収書です。発行日、合計金額、支払元、支払先、但し書き、登録番号をJSON形式で抽出してください。';
+          break;
+        case '日計表':
+        case '銀行通帳':
+        case 'その他（汎用テーブル）':
+          prompt = 'この画像はテーブル（表）形式のドキュメントです。1行目をヘッダー（キー）とし、2行目以降を各行のデータ（バリュー）として、JSON配列形式で構造化して抽出してください。';
+          break;
+        case 'タイムカード':
+        default:
+          prompt = `画像から情報を抽出し、JSON形式で出力してください。画像が勤怠管理表やタイムカードの場合、timecard形式で出力: {"type":"timecard", "title":{"yearMonth":"YYYY年MM月", "name":"氏名"}, "days":[{"date":"D", "dayOfWeek":"ddd", "morningStart":"HH:mm", "morningEnd":"HH:mm", "afternoonStart":"HH:mm", "afternoonEnd":"HH:mm"}]}。timecardの時間は、出勤・退勤のペアがない場合nullにしてください。画像が請求書や明細書などの表形式データの場合、table形式で出力: {"type":"table", "title":{"yearMonth":"YYYY年MM月", "name":"件名や宛名"}, "headers":["ヘッダー1", "ヘッダー2", "..."], "data":[["行1セル1", "..."], ["行2セル1", "..."]]}。上記いずれにも該当しない場合は、transcription形式で出力: {"type":"transcription", "fileName":"元のファイル名", "content":"文字起こし結果"}。氏名や件名が読み取れない場合は、"不明"としてください。`;
+          break;
+      }
+
       const imagePart = {
         inlineData: {
           data: page.base64,

@@ -264,6 +264,7 @@ const App = () => {
   const [updateStatus, setUpdateStatus] = useState<{ message: string; ready?: boolean; transient?: boolean } | null>(null);
   const updateTimeoutRef = useRef<number | null>(null);
 
+  const [documentType, setDocumentType] = useState('タイムカード');
   const [roster, setRoster] = useState<string[]>([]);
   const [rosterFile, setRosterFile] = useState<{ name: string; path: string } | null>(null);
   const [rosterSettings, setRosterSettings] = useState({ sheetName: '', column: 'A' });
@@ -626,7 +627,7 @@ const App = () => {
 
         if (pagesToProcess.length > 0) {
           console.log(`[handleProcess] Sending ${pagesToProcess.length} page(s) to Gemini for OCR.`);
-          const { data: result, usage } = await withRetry(() => processDocumentPages(pagesToProcess));
+          const { data: result, usage } = await withRetry(() => processDocumentPages(pagesToProcess, documentType));
           
           if (usage) {
             aggregatedUsage.promptTokens += usage.promptTokens;
@@ -1266,7 +1267,25 @@ const App = () => {
         <main className="space-y-6">
           <div className="p-6 bg-white rounded-lg shadow-md space-y-6">
             <div>
-              <h2 className="text-lg font-semibold text-gray-700 mb-4">1. ファイルをアップロード</h2>
+              <h2 className="text-lg font-semibold text-gray-700 mb-4">1. 帳票の種類を選択し、ファイルをアップロード</h2>
+              <div className="mb-4">
+                <label htmlFor="document-type" className="block text-sm font-medium text-gray-700 mb-2">
+                  帳票種別
+                </label>
+                <select
+                  id="document-type"
+                  name="document-type"
+                  value={documentType}
+                  onChange={(e) => setDocumentType(e.target.value)}
+                  className="block w-full max-w-xs rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                >
+                  <option>タイムカード</option>
+                  <option>日計表</option>
+                  <option>領収書</option>
+                  <option>銀行通帳</option>
+                  <option>その他（汎用テーブル）</option>
+                </select>
+              </div>
               <MultiFileUploader onFilesUpload={handleFilesUpload} previews={previews} onRemoveFile={handleRemoveFile} onClearAll={handleClearAll} onPreviewClick={handlePreviewClick} />
             </div>
 
