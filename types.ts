@@ -9,6 +9,7 @@ export interface ProcessedTable {
   nameCorrected?: boolean;
   sourceImageBase64?: string;
   rotation?: number;
+  errors?: { [key: string]: string };
 }
 
 export interface ProcessedText {
@@ -17,6 +18,7 @@ export interface ProcessedText {
   content: string;
   sourceImageBase64?: string;
   rotation?: number;
+  errors?: { [key: string]: string };
 }
 
 export interface TimecardDay {
@@ -38,6 +40,7 @@ export interface ProcessedTimecard {
   nameCorrected?: boolean;
   sourceImageBase64?: string;
   rotation?: number;
+  errors?: { [key: string]: string };
 }
 
 export type ProcessedData = ProcessedTable | ProcessedText | ProcessedTimecard;

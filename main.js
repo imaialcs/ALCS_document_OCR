@@ -169,7 +169,57 @@ ipcMain.on('restart-app', () => {
   autoUpdater.quitAndInstall();
 });
 
-// --- IPC Handlers ---
+// --- Data Validation Function ---
+const validateData = (data) => {
+  const errors = {};
+
+  // Helper to parse numbers from strings like "1,000円"
+  const parseNumber = (value) => {
+    if (typeof value === 'number') return value;
+    if (typeof value !== 'string') return NaN;
+    return parseFloat(value.replace(/[^0-9.-]+/g, ''));
+  };
+
+  // 1. 日付形式チェック (YYYY-MM-DD or YYYY/MM/DD)
+  const dateKeys = ['発行日', '日付'];
+  dateKeys.forEach(key => {
+    if (data[key]) {
+      const dateStr = String(data[key]);
+      // 簡易的な正規表現でチェック
+      if (!/^\d{4}[-\/]\d{1,2}[-\/]\d{1,2}$/.test(dateStr)) {
+        // より厳密なチェック (e.g. new Date())
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) {
+            errors[key] = '無効な日付形式です。';
+        }
+      }
+    }
+  });
+
+  // 2. 数値計算チェック (小計 + 消費税 = 合計金額)
+  if ('小計' in data && '消費税' in data && '合計金額' in data) {
+    const subtotal = parseNumber(data['小計']);
+    const tax = parseNumber(data['消費税']);
+    const total = parseNumber(data['合計金額']);
+
+    if (!isNaN(subtotal) && !isNaN(tax) && !isNaN(total)) {
+      if (Math.abs((subtotal + tax) - total) > 0.01) { // 浮動小数点誤差を考慮
+        errors['合計金額'] = `計算が合いません (小計${subtotal} + 消費税${tax} = ${subtotal + tax} となります)。`;
+      }
+    }
+  }
+
+  // 3. 必須項目チェック
+  const requiredKeys = ['請求元', '支払先', '合計金額'];
+  requiredKeys.forEach(key => {
+    if (data[key] === null || data[key] === '' || data[key] === undefined) {
+      errors[key] = '必須項目が空です。';
+    }
+  });
+
+  return errors;
+};
+
 
 // Gemini OCR
 ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
@@ -204,7 +254,7 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
         case '日計表':
         case '銀行通帳':
         case 'その他（汎用テーブル）':
-          prompt = 'この画像はテーブル（表）形式のドキュメントです。1行目をヘッダー（キー）とし、2行目以降を各行のデータ（バリュー）として、JSON配列形式で構造化して抽出してください。';
+          prompt = 'この画像はテーブル（表）形式のドキュメントです。1行目をヘッダー（キー）とし、2行目以降を各行のデータ（バリュー）として、JSON配列形式で構造化して抽出してください。表の中に空のセルがある場合は、その箇所を空文字列（""）として正確に表現してください。';
           break;
         case 'タイムカード':
         default:
@@ -277,6 +327,11 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
         if (data.type === 'transcription') {
           data.fileName = page.name;
         }
+
+        // ★★★ Run validation and attach errors ★★★
+        const validationErrors = validateData(data);
+        data.errors = validationErrors;
+
         results.push(data);
       }
 

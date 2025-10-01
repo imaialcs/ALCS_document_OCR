@@ -12,17 +12,17 @@ registerLanguageDictionary(jaJP);
 
 // Handsontableの全モジュールを登録
 registerAllModules();
-
 const DataTable: React.FC<{
   cardIndex: number;
   headers: string[];
   data: string[][];
+  errors?: { [key: string]: string };
   onDataChange: (cardIndex: number, rowIndex: number, cellIndex: number, value: string) => void;
   onRowCreate: (cardIndex: number, rowIndex: number, amount: number) => void;
   onRowRemove: (cardIndex: number, rowIndex: number, amount: number) => void;
   onColCreate: (cardIndex: number, colIndex: number, amount: number) => void;
   onColRemove: (cardIndex: number, colIndex: number, amount: number) => void;
-}> = ({ cardIndex, headers, data, onDataChange, onRowCreate, onRowRemove, onColCreate, onColRemove }) => {
+}> = ({ cardIndex, headers, data, errors, onDataChange, onRowCreate, onRowRemove, onColCreate, onColRemove }) => {
 
   const hotTableRef = useRef<HotTable>(null);
   const [hiddenColumns, setHiddenColumns] = useState<number[]>([]);
@@ -122,6 +122,16 @@ const DataTable: React.FC<{
         hiddenColumns={{
           columns: hiddenColumns,
           indicators: true
+        }}
+        comments={true}
+        cells={(row, col) => {
+          const cellProperties: { className?: string; comment?: { value: string } } = {};
+          const header = safeHeaders[col];
+          if (errors && errors[header]) {
+            cellProperties.className = 'ht-validation-error';
+            cellProperties.comment = { value: errors[header] };
+          }
+          return cellProperties;
         }}
         contextMenu={{
           items: {

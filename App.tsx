@@ -1532,6 +1532,7 @@ const App = () => {
                                       cardIndex={index} 
                                       headers={item.headers}
                                       data={item.data}
+                                      errors={item.errors}
                                       onDataChange={handleDataChange} 
                                       onRowCreate={handleRowCreate}
                                       onRowRemove={handleRowRemove}
@@ -1568,6 +1569,7 @@ const App = () => {
                                           cardIndex={index} 
                                           headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
                                           data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
+                                          errors={item.errors}
                                           onDataChange={handleDataChange} 
                                           onRowCreate={handleRowCreate}
                                           onRowRemove={handleRowRemove}

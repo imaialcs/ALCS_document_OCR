@@ -1369,3 +1369,7 @@ video {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
+
+.ht-validation-error {
+  background-color: #fef2f2; /* Tailwind's bg-red-50 */
+}
