@@ -58,7 +58,7 @@
       "node_modules/@google/genai/**/*"
     ],
     "appId": "com.alcs.documentocr",
-    "productName": "ALCS文書OCR",
+    "productName": "ALCS-Document-OCR",
     "directories": {
       "output": "build_output"
     },
@@ -80,6 +80,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     },
-    "publish": "github"
+    "publish": "github",
+    "artifactName": "${productName}-Setup-${version}.${ext}"
   }
 }

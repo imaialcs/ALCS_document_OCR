@@ -26,29 +26,30 @@ const DataTable: React.FC<{
 
   const hotTableRef = useRef<HotTable>(null);
   const [hiddenColumns, setHiddenColumns] = useState<number[]>([]);
-  const [columnVisibility, setColumnVisibility] = useState<{ [key: string]: boolean }>({});
+  // State is now keyed by column index (number)
+  const [columnVisibility, setColumnVisibility] = useState<{ [key: number]: boolean }>({});
 
   // Defensive check to ensure data and headers are always arrays
   const safeData = Array.isArray(data) ? data : [];
   const safeHeaders = Array.isArray(headers) ? headers : [];
 
   useEffect(() => {
-    const initialVisibility = safeHeaders.reduce((acc, header) => {
-      acc[header] = true;
+    const initialVisibility = safeHeaders.reduce((acc, _, index) => {
+      acc[index] = true; // Use index as key
       return acc;
-    }, {} as { [key: string]: boolean });
+    }, {} as { [key: number]: boolean });
     setColumnVisibility(initialVisibility);
   }, [safeHeaders]);
 
   useEffect(() => {
-    const newHiddenColumns = safeHeaders
-      .map((header, index) => (columnVisibility[header] === false ? index : -1))
-      .filter(index => index !== -1);
+    const newHiddenColumns = Object.keys(columnVisibility)
+      .filter(key => columnVisibility[parseInt(key)] === false)
+      .map(key => parseInt(key));
     setHiddenColumns(newHiddenColumns);
-  }, [columnVisibility, safeHeaders]);
+  }, [columnVisibility]);
 
-  const handleColumnVisibilityChange = (header: string) => {
-    setColumnVisibility(prev => ({ ...prev, [header]: !prev[header] }));
+  const handleColumnVisibilityChange = (index: number) => {
+    setColumnVisibility(prev => ({ ...prev, [index]: !prev[index] }));
   };
 
   // Determine if this is a timecard table based on fixed headers
@@ -98,12 +99,12 @@ const DataTable: React.FC<{
               <input
                 type="checkbox"
                 id={`col-toggle-${cardIndex}-${index}`}
-                checked={columnVisibility[header] ?? true}
-                onChange={() => handleColumnVisibilityChange(header)}
+                checked={columnVisibility[index] ?? true}
+                onChange={() => handleColumnVisibilityChange(index)}
                 className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <label htmlFor={`col-toggle-${cardIndex}-${index}`} className="ml-2 text-sm text-gray-600">
-                {header}
+                {header || '空白列'}
               </label>
             </div>
           ))}

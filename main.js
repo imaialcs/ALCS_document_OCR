@@ -243,6 +243,12 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
   const aggregatedUsage = { promptTokens: 0, outputTokens: 0 };
 
   for (const page of pages) {
+    // Add a defensive check to ensure the page object is not null/undefined
+    if (!page) {
+      log.error('An undefined page was received in invoke-gemini-ocr. Skipping.');
+      console.error('An undefined page was received in invoke-gemini-ocr. Skipping.');
+      continue; // Skip this iteration
+    }
     try {
       log.info(`Starting OCR for file: ${page.name} with document type: ${documentType}`); // 処理開始ログを追加
       

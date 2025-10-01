@@ -625,9 +625,11 @@ const App = () => {
 
         if (cancelProcessingRef.current) break;
 
-        if (pagesToProcess.length > 0) {
-          console.log(`[handleProcess] Sending ${pagesToProcess.length} page(s) to Gemini for OCR.`);
-          const { data: result, usage } = await withRetry(() => processDocumentPages(pagesToProcess, documentType));
+        for (const sourcePage of pagesToProcess) {
+          if (cancelProcessingRef.current) break;
+
+          console.log(`[handleProcess] Sending page ${sourcePage.name} to Gemini for OCR.`);
+          const { data: result, usage } = await withRetry(() => processDocumentPages([sourcePage], documentType));
           
           if (usage) {
             aggregatedUsage.promptTokens += usage.promptTokens;
@@ -635,18 +637,16 @@ const App = () => {
           }
 
           if (result && Array.isArray(result)) {
-            console.log(`[handleProcess] Received ${result.length} data items from Gemini.`);
+            console.log(`[handleProcess] Received ${result.length} data items from Gemini for page ${sourcePage.name}.`);
             
             // Associate sourceImageBase64 with each processed item
-            const processedDataWithSource = result.map((item, resIndex) => {
-              // Assuming a 1-to-1 correspondence between the order of pages processed
-              // and the order of results returned by processDocumentPages.
-              const sourcePage = pagesToProcess[resIndex]; // Get the corresponding page's base64
+            const processedDataWithSource = result.map(item => {
+              // All items in result belong to this sourcePage
               return { ...item, sourceImageBase64: `data:${sourcePage.mimeType};base64,${sourcePage.base64}` };
             });
             allExtractedData.push(...processedDataWithSource);
           } else {
-            console.error('[handleProcess] Gemini processing returned invalid or empty data:', result);
+            console.error(`[handleProcess] Gemini processing returned invalid or empty data for page ${sourcePage.name}:`, result);
           }
         }
       }
@@ -1512,16 +1512,16 @@ const App = () => {
                             <div className="h-full overflow-x-auto">
                               {item.type === 'table' ? (
                                 <>
-                                  <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                          <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
+                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
+                                          <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
                                           <span className="text-gray-500">-</span>
-                                          <div className="flex items-center gap-1.5 flex-grow">
+                                          <div className="flex items-center gap-1.5 flex-grow min-w-0">
                                               {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
                                               <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
                                           </div>
                                       </div>
-                                      <div className="flex items-center gap-2">
+                                      <div className="w-full flex justify-end sm:w-auto sm:justify-start">
                                           <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のテーブルをダウンロード`}>
                                               <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
                                               Excelでダウンロード
@@ -1542,16 +1542,16 @@ const App = () => {
                                 </>
                               ) : item.type === 'timecard' ? (
                                   <>
-                                      <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                          <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                              <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full sm:w-auto" aria-label="Edit Year and Month" />
+                                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
+                                          <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
+                                              <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
                                               <span className="text-gray-500">-</span>
-                                              <div className="flex items-center gap-1.5 flex-grow">
+                                              <div className="flex items-center gap-1.5 flex-grow min-w-0">
                                                   {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
                                                   <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
                                               </div>
                                           </div>
-                                          <div className="flex items-center gap-2">
+                                          <div className="flex items-center self-end sm:self-center gap-2">
                                               {outputMode === 'template' && excelTemplateFile?.path ? (
                                                   <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
                                                       <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
