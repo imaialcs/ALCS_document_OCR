@@ -350,6 +350,69 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
   return { data: results, usage: aggregatedUsage };
 });
 
+ipcMain.handle('invoke-grok', async (_event, payload) => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    const message = 'Grok APIキーが設定されていません。';
+    log.error(message);
+    return { success: false, error: message };
+  }
+
+  const prompt = typeof payload === 'string' ? payload : payload?.prompt;
+  if (!prompt || typeof prompt !== 'string') {
+    const message = 'Grok APIに送信するpromptが指定されていません。';
+    log.error(message);
+    return { success: false, error: message };
+  }
+
+  try {
+    const genAI = new GoogleGenAI({ apiKey });
+    const result = await genAI.models.generateContent({
+      model: 'gemini-flash-lite-latest',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        topK: 32,
+        topP: 1,
+        maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const parts = (result?.candidates?.[0]?.content?.parts) || [];
+    const responseText = parts
+      .map((part) => part.text)
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+
+    if (!responseText) {
+      const message = 'Grok APIからの応答が空でした。';
+      log.error(message);
+      return { success: false, error: message };
+    }
+
+    return {
+      success: true,
+      data: {
+        choices: [
+          {
+            message: {
+              content: responseText,
+            },
+          },
+        ],
+      },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log.error('Grok API呼び出しに失敗しました:', error);
+    return {
+      success: false,
+      error: 'Grok API呼び出しに失敗しました: ' + errorMessage,
+    };
+  }
+});
 // --- Image Preprocessing Function (moved from preload) ---
 /**
  * Processes an image using Jimp for optimization before sending to an OCR API.

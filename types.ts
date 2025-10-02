@@ -1,4 +1,4 @@
-export interface ProcessedTable {
+﻿export interface ProcessedTable {
   type: 'table';
   title: {
     yearMonth: string;
@@ -52,3 +52,10 @@ export interface FilePreview {
   name: string;
   isLoading: boolean;
 }
+
+export interface SuggestedOperation {
+  name: string;
+  operation: string;
+  params: any;
+}
+
