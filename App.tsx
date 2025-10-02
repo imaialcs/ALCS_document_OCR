@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay } from './types';
 import { withRetry, transformTimecardJsonForExcelHandler, readFileAsArrayBuffer } from './services/utils';
-import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, UserCircleIcon, TableCellsIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, MergeIcon, UndoIcon, ScissorsIcon, AdjustmentsHorizontalIcon, RotateLeftIcon, RotateRightIcon } from './components/icons';
+import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, RotateLeftIcon, RotateRightIcon } from './components/icons';
 import { Allotment } from "allotment";
 import "allotment/dist/style.css";
 import DataTable from './components/DataTable';
@@ -12,13 +12,21 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import owlIcon from '/owl.png';
 
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { GrokAssistant } from './components/GrokAssistant';
+
+// Grokが提案する操作の型定義
+interface SuggestedOperation {
+  name: string;
+  operation: string;
+  params: any;
+}
+
 const getBasename = (filePath: string): string => {
   if (!filePath) return '';
-  // WindowsとUnix系の両方のパスセパレータに対応
   return filePath.substring(filePath.lastIndexOf('/') + 1).substring(filePath.lastIndexOf('\\') + 1);
 };
 
-// Vite環境でpdf.worker.mjsを正しく読み込むための設定
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 const readFileAsBase64 = (file: File): Promise<{ base64: string; mimeType: string }> => {
@@ -275,6 +283,10 @@ const App = () => {
   const [outputMode, setOutputMode] = useState<'new' | 'template'>('new');
   const [templateSettings, setTemplateSettings] = useState({ dataStartCell: 'A1' });
 
+  // --- Grok関連のState ---
+  const [suggestedOperations, setSuggestedOperations] = useState<SuggestedOperation[]>([]);
+  const [isSuggestionLoading, setIsSuggestionLoading] = useState(false);
+
   useEffect(() => {
     return () => {
       previews.forEach(p => {
@@ -311,18 +323,15 @@ const App = () => {
     if (window.electronAPI?.onUpdateStatus) {
       removeUpdateStatusListener = window.electronAPI.onUpdateStatus((status) => {
         console.log('Update status received:', status);
-        // 'お使いのバージョンは最新です。' のメッセージは表示しない
         if (status.message === 'お使いのバージョンは最新です。') {
           return;
         }
-        // アップデートの準備ができた場合のみ表示
         if (status.ready) {
           if (updateTimeoutRef.current) {
             clearTimeout(updateTimeoutRef.current);
           }
           setUpdateStatus(status);
         } else {
-          // それ以外の場合は非表示にする (自動チェックによる一時的なメッセージは表示しない)
           setUpdateStatus(null);
         }
       });
@@ -330,11 +339,6 @@ const App = () => {
 
     if (window.electronAPI?.onShowUpdateNotification) {
       removeShowUpdateNotificationListener = window.electronAPI.onShowUpdateNotification(() => {
-        // メニューバーから手動で更新チェックがトリガーされた場合
-        // 現在のアップデートステータスを強制的に表示する
-        // autoUpdater.checkForUpdatesAndNotify() の結果が onUpdateStatus 経由で来るはずなので、
-        // ここでは単に表示フラグを立てるか、最新のステータスを再評価する
-        // ただし、ここでは単に「更新を確認中...」のようなメッセージを表示する
         setUpdateStatus({ message: '更新を確認中...', transient: true });
         if (updateTimeoutRef.current) {
           clearTimeout(updateTimeoutRef.current);
@@ -342,7 +346,7 @@ const App = () => {
         updateTimeoutRef.current = window.setTimeout(() => {
           setUpdateStatus(null);
           updateTimeoutRef.current = null;
-        }, 5000); // 5秒後に消えるようにする
+        }, 5000);
       });
     }
 
@@ -359,7 +363,6 @@ const App = () => {
     };
   }, []);
 
-  // Roster file reading logic with debounce
   useEffect(() => {
     const handler = setTimeout(() => {
       const readRoster = async () => {
@@ -369,14 +372,13 @@ const App = () => {
               filePath: rosterFile.path,
               sheetName: rosterSettings.sheetName.trim(),
               column: rosterSettings.column,
-              hasHeader: true, // ヘッダー行をスキップするように指定
+              hasHeader: true,
             });
 
             if (readResult.success && readResult.names) {
               setRoster(readResult.names);
               setError(null);
             } else {
-              // ユーザーが入力中のシート名が見つからないエラーは表示しない
               if (readResult.error && !readResult.error.includes('Sheet')) {
                 setError(readResult.error || '名簿ファイルの読み込みに失敗しました。');
               }
@@ -393,7 +395,7 @@ const App = () => {
       };
 
       readRoster();
-    }, 500); // 500msのデバウンス
+    }, 500);
 
     return () => {
       clearTimeout(handler);
@@ -532,12 +534,59 @@ const App = () => {
       setTemplateSettings(prev => ({ ...prev, [name]: value.trim() }));
   };
 
+  const fetchGrokSuggestions = async (data: ProcessedData[]) => {
+    const activeSpreadsheet = data.find(d => d.type === 'table' || d.type === 'timecard');
+    if (!activeSpreadsheet) {
+      setSuggestedOperations([]);
+      return;
+    }
+
+    setIsSuggestionLoading(true);
+    setSuggestedOperations([]);
+
+    const prompt = `
+以下のJSONデータは、OCRによって読み取られたスプレッドシートの内容です。このデータに対してユーザーが実行する可能性のある、便利だと思われる操作を3つまで提案してください。
+
+現在のスプレッドシートデータ (JSON形式):
+${JSON.stringify(activeSpreadsheet, null, 2)}
+
+---
+提案は、以下のJSON形式の配列として出力してください。
+{
+  "operations": [
+    { "name": "ボタンに表示する日本語の操作名", "operation": "操作種別", "params": {"key1": "value1"} }
+  ]
+}
+
+- "操作種別"の候補: "delete_row", "delete_col" のみとしてください。
+- paramsには、その操作に絶対に必要なパラメータ（例: "row_index": 5, "col_name": "列名"）を含めてください。
+- 上記のJSON以外のテキストは絶対に出力しないでください。
+`;
+
+    try {
+      const result = await window.electronAPI.invokeGrokApi({ prompt });
+      if (result.success && result.data.choices && result.data.choices[0]) {
+        const responseText = result.data.choices[0].message.content;
+        const parsed = JSON.parse(responseText);
+        if (parsed.operations && Array.isArray(parsed.operations)) {
+          setSuggestedOperations(parsed.operations);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch or parse Grok suggestions:", e);
+      setSuggestedOperations([]);
+    } finally {
+      setIsSuggestionLoading(false);
+    }
+  };
+
   const handleProcess = async () => {
     if (previews.length === 0) return;
     console.log('[handleProcess] Starting processing...');
     setLoading(true);
     setError(null);
     setProcessedData([]);
+    setSuggestedOperations([]);
     setTokenUsage(null);
     setHasScrolledToResults(false);
     cancelProcessingRef.current = false;
@@ -662,7 +711,7 @@ const App = () => {
       }
 
       console.log('[handleProcess] Sanitizing and validating all extracted data.');
-      const sanitizedAndValidatedData = allExtractedData.map(item => {
+      const sanitizedAndValidatedData = allExtractedData.map((item: ProcessedData) => {
           if (item.type === 'timecard') {
             const card = item as ProcessedTimecard;
             if (!card || typeof card !== 'object' || !card.days) return null;
@@ -731,6 +780,9 @@ const App = () => {
 
       if (!cancelProcessingRef.current) {
         setProcessedData(sanitizedAndValidatedData);
+        if (sanitizedAndValidatedData.length > 0) {
+          fetchGrokSuggestions(sanitizedAndValidatedData);
+        }
       }
 
     } catch (e: any) {
@@ -893,19 +945,79 @@ const App = () => {
         item.data.forEach((row: string[]) => {
           row.splice(colIndex, amount);
         });
+      } else if (item.type === 'timecard' && item.days) {
+        // This is more complex as timecard doesn't have dynamic columns
+        // We'd need to null out the data in the specific column
       }
       return newData;
     });
   };
 
+  const handleGrokOperation = (operation: { operation: string; params: any }) => {
+    if (!operation || !operation.operation) return;
 
-  
+    const targetCardIndex = processedData.findIndex(d => d.type === 'table' || d.type === 'timecard');
+    if (targetCardIndex === -1) {
+        setError("Grokが操作できるテーブルデータが見つかりません。");
+        return;
+    }
+
+    const { operation: opName, params } = operation;
+    console.log(`Executing Grok operation: ${opName}`, params);
+
+    switch (opName) {
+        case 'delete_row':
+            if (params.row_index !== undefined) {
+                handleRowRemove(targetCardIndex, params.row_index, 1);
+            }
+            break;
+
+        case 'delete_col':
+            if (params.col_index !== undefined) {
+                handleColRemove(targetCardIndex, params.col_index, 1);
+            } else if (params.col_name) {
+                const targetCard = processedData[targetCardIndex];
+                let colIndex = -1;
+                let headers: readonly string[] = [];
+
+                if (targetCard.type === 'table') {
+                    headers = targetCard.headers;
+                } else if (targetCard.type === 'timecard') {
+                    headers = ['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤'];
+                }
+
+                if (headers.length > 0) {
+                    colIndex = headers.findIndex(h => h === params.col_name || (h && params.col_name && h.includes(params.col_name)));
+                }
+
+                if (colIndex > -1) {
+                    handleColRemove(targetCardIndex, colIndex, 1);
+                    setError(null);
+                } else {
+                    setError(`Grokが指定した列名「${params.col_name}」が見つかりませんでした。`);
+                }
+            }
+            break;
+
+        default:
+            setError(`操作「${opName}」はまだ実装されていません。`);
+            console.warn(`Unknown Grok operation: ${opName}`);
+            break;
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    for (const item of processedData) {
+      await handleDownloadSingle(item);
+    }
+  };
+
   const handleDownloadSingle = async (item: ProcessedData) => {
     if (!window.electronAPI) {
         setError("ファイル保存機能が利用できません。");
         return;
     }
-    setError(null); // 処理開始時にエラーをクリア
+    setError(null);
 
     try {
         if (item.type === 'timecard') {
@@ -916,171 +1028,13 @@ const App = () => {
                     return;
                 }
 
-                // テンプレートからシート名リストを取得
-                const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
-                const targetSheetName = findMatchingSheetName(card.title.name, tempWb.SheetNames);
-
-                if (!targetSheetName) {
-                    setError(`テンプレートに氏名「${card.title.name}」に一致するシートが見つかりませんでした。`);
-                    return;
-                }
-
-                const pythonArgs = transformTimecardJsonForExcelHandler(card, excelTemplateFile.path, targetSheetName, templateSettings.dataStartCell);    
-                            // window.electronAPI.runPythonScript の型定義を拡張するか、型アサーションを使用
-                const result = await (window.electronAPI as any).runPythonScript({
-                    args: pythonArgs,
-                });
-
-                if (result.success && result.message) {
-                    // setUpdateStatus({ message: result.message, transient: true }); // アップデート通知を削除
-                    // テンプレートに転記後、ファイルを開く
-                    if (excelTemplateFile?.path) {
-                        await window.electronAPI.openFile(excelTemplateFile.path);
-                    }
-                } else if (result.error) {
-                    throw new Error(result.error);
-                }
-            } else { // outputMode === 'new'
-                // 新規Excelファイル作成
-                const wb = XLSX.utils.book_new();
-                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\|/:*?"<>|]/g, '').substring(0, 31);
-                const ws_data = [
-                    ['期間', card.title.yearMonth],
-                    ['氏名', card.title.name],
-                    [], // 空行
-                    ['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤'] // ヘッダー
-                ];
-                // タイムカードデータを追加
-                card.days.forEach(day => {
-                    ws_data.push([
-                        day.date,
-                        day.dayOfWeek || '',
-                        day.morningStart || '',
-                        day.morningEnd || '',
-                        '', // 空白列を追加
-                        day.afternoonStart || '',
-                        day.afternoonEnd || '',
-                    ]);
-                });
-                const ws = XLSX.utils.aoa_to_sheet(ws_data);
-                XLSX.utils.book_append_sheet(wb, ws, sheetName);
-                const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-                const uint8FileData = new Uint8Array(fileData);
-                const fileName = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}.xlsx`.replace(/[\\|/:*?"<>|]/g, '_') || 'Timecard.xlsx';
-                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, uint8FileData);
-                console.log('saveFile result:', savedFilePath);
-                if (savedFilePath && savedFilePath.path) {
-                    const openFileResult = await window.electronAPI.openFile(savedFilePath.path);
-                    console.log('openFile result:', openFileResult);
-                }
-            }
-            // Canceled case is handled implicitly
-
-        } else if (item.type === 'table') {
-            const card = item as ProcessedTable;
-            const fileNameBase = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}`.replace(/[\\|/:*?"<>|]/g, '_') || 'Document';
-
-            let fileData: Uint8Array;
-            let fileName: string = '';
-
-            if (outputMode === 'template') {
-                if (!excelTemplateData || !templateSettings.dataStartCell) {
-                    setError('テンプレートファイルとデータ開始セルを指定してください。');
-                    return;
-                }
-                const outputBookType = excelTemplateFile?.name.endsWith('.xlsm') ? 'xlsm' : 'xlsx';
-                const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
-                const newWb = XLSX.read(XLSX.write(tempWb, { type: 'array', bookType: outputBookType }), { type: 'array' }); // ワークブックをディープコピー
-
-                const targetSheetName = findMatchingSheetName(card.title.name, newWb.SheetNames);
-                
-                if (!targetSheetName) {
-                    setError(`テンプレートファイルに、氏名「${card.title.name}」に一致するシート（フルネーム/姓/名）が見つかりませんでした。`);
-                    return;
-                }
-
-                const newSheet = newWb.Sheets[targetSheetName];
-                if (!newSheet) {
-                    setError(`テンプレートのシート「${targetSheetName}」が見つかりませんでした。`);
-                    return;
-                }
-                XLSX.utils.sheet_add_aoa(newSheet, card.data, { origin: templateSettings.dataStartCell });
-                
-                fileData = XLSX.write(newWb, { bookType: outputBookType, type: 'array' });
-                fileName = `${fileNameBase}_template_filled.${outputBookType}`;
-                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
-                if (savedFilePath && savedFilePath.path) {
-                    await window.electronAPI.openFile(savedFilePath.path);
-                }
-            } else { // 新規Excelファイル作成
-                const wb = XLSX.utils.book_new();
-                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\|/:*?"<>|]/g, '').substring(0, 31);
-                const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
-                const ws = XLSX.utils.aoa_to_sheet(ws_data);
-                XLSX.utils.book_append_sheet(wb, ws, sheetName);
-                fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-                const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
-                console.log('saveFile result:', savedFilePath);
-                if (savedFilePath && savedFilePath.path) {
-                    await window.electronAPI.openFile(savedFilePath.path);
-                }
-            }
-            setError(null);
-
-        } else if (item.type === 'transcription') {
-            const textItem = item as ProcessedText;
-            const wb = XLSX.utils.book_new();
-            const sheetName = textItem.fileName.replace(/\.[^/.]+$/, "").substring(0, 31) || 'Transcription';
-            const ws_data = [[item.content]]; // Put content in a single cell
-            const ws = XLSX.utils.aoa_to_sheet(ws_data);
-            XLSX.utils.book_append_sheet(wb, ws, sheetName);
-            const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-            const uint8FileData = new Uint8Array(fileData);
-            const fileName = `${textItem.fileName.replace(/\.[^/.]+$/, "")}.xlsx`;
-            console.log(`[handleDownloadSingle] Transcription: Attempting to save file. fileName: ${fileName}, content length: ${textItem.content.length}`);
-            const savedFilePath = await window.electronAPI.saveFile({
-                defaultPath: fileName,
-                filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
-            }, uint8FileData);
-            console.log('[handleDownloadSingle] Transcription: saveFile result:', savedFilePath);
-            if (savedFilePath && savedFilePath.path) {
-                await window.electronAPI.openFile(savedFilePath.path);
-            }
-        }
-    } catch (err: any) {
-        setError(`ファイルの処理中にエラーが発生しました: ${err.message}`);
-        console.error(err);
-    }
-  };
-
-  const handleDownloadAll = async () => {
-    if (!window.electronAPI) {
-        setError("ファイル保存機能が利用できません。");
-        return;
-    }
-    setError(null); // 処理開始時にエラーをクリア
-
-    const tableData = processedData.filter(d => d.type === 'table') as ProcessedTable[];
-    const timecardData = processedData.filter(d => d.type === 'timecard') as ProcessedTimecard[];
-    const transcriptionData = processedData.filter(d => d.type === 'transcription') as ProcessedText[];
-
-    try {
-        // タイムカードデータの一括転記
-        if (timecardData.length > 0) {
-            if (outputMode === 'template') {
-                if (!excelTemplateFile?.path || !excelTemplateData) {
-                    setError('タイムカードをテンプレートに転記するには、Excelテンプレートファイルを指定してください。');
-                    return;
-                }
-
                 const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
                 const allOperations: any[] = [];
                 const unmatchedNames: string[] = [];
 
-                timecardData.forEach(card => {
+                processedData.filter((d): d is ProcessedTimecard => d.type === 'timecard').forEach((card: ProcessedTimecard) => {
                     const targetSheetName = findMatchingSheetName(card.title.name, tempWb.SheetNames);
                     if (targetSheetName) {
-                        // ここで修正した変換関数を使用
                         const transformed = transformTimecardJsonForExcelHandler(card, excelTemplateFile.path, targetSheetName, templateSettings.dataStartCell);
                         allOperations.push(...transformed.operations);
                     } else {
@@ -1099,12 +1053,6 @@ const App = () => {
                     });
 
                     if (result.success && result.message) {
-                        // let message = result.message; // アップデート通知を削除
-                        // if (unmatchedNames.length > 0) {
-                        //     message += ` (未転記: ${unmatchedNames.join(', ')})`;
-                        // }
-                        // setUpdateStatus({ message, transient: true }); // アップデート通知を削除
-                        // テンプレートに転記後、ファイルを開く
                         if (excelTemplateFile?.path) {
                             await window.electronAPI.openFile(excelTemplateFile.path);
                         }
@@ -1118,55 +1066,55 @@ const App = () => {
                         setError('転記対象のデータが見つかりませんでした。');
                     }
                 }
-            } else { // outputMode === 'new'
-                // 新規Excelファイル作成 (この部分は変更なし)
+            } else {
                 const wb = XLSX.utils.book_new();
-                timecardData.forEach(card => {
-                    const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\|/:*?"<>|]/g, '').substring(0, 31);
-                    const ws_data = [
-                        ['期間', card.title.yearMonth],
-                        ['氏名', card.title.name],
-                        [], // 空行
-                        ['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤'] // ヘッダー
-                    ];
-                    card.days.forEach(day => {
-                        ws_data.push([
-                            day.date,
-                            day.dayOfWeek || '',
-                            day.morningStart || '',
-                            day.morningEnd || '',
-                            '', // 空白列を追加
-                            day.afternoonStart || '',
-                            day.afternoonEnd || '',
-                        ]);
-                    });
-                    const ws = XLSX.utils.aoa_to_sheet(ws_data);
-                    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+                const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\|/:*?"<>|]/g, '').substring(0, 31);
+                const ws_data = [
+                    ['期間', card.title.yearMonth],
+                    ['氏名', card.title.name],
+                    [],
+                    ['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']
+                ];
+                card.days.forEach(day => {
+                    ws_data.push([
+                        day.date,
+                        day.dayOfWeek || '',
+                        day.morningStart || '',
+                        day.morningEnd || '',
+                        '',
+                        day.afternoonStart || '',
+                        day.afternoonEnd || '',
+                    ]);
                 });
+                const ws = XLSX.utils.aoa_to_sheet(ws_data);
+                XLSX.utils.book_append_sheet(wb, ws, sheetName);
                 const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
                 const uint8FileData = new Uint8Array(fileData);
-                const fileName = 'Timecards_All.xlsx';
+                const fileName = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}.xlsx`.replace(/[\\|/:*?"<>|]/g, '_') || 'Timecard.xlsx';
                 const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, uint8FileData);
                 if (savedFilePath && savedFilePath.path) {
-                    await window.electronAPI.openFile(savedFilePath.path);
+                    const openFileResult = await window.electronAPI.openFile(savedFilePath.path);
                 }
             }
-        }
 
-        // テーブルデータの一括保存 (この部分は変更なし)
-        if (tableData.length > 0) {
+        } else if (item.type === 'table') {
+            const card = item as ProcessedTable;
+            const fileNameBase = `${card.title.name.replace(/\s+/g, '')}_${card.title.yearMonth.replace(/\s+/g, '')}`.replace(/[\\|/:*?"<>|]/g, '_') || 'Document';
+
+            let fileData: Uint8Array;
+            let fileName: string = '';
+
             if (outputMode === 'template') {
-                if (!excelTemplateData || !excelTemplateFile || !templateSettings.dataStartCell) {
+                if (!excelTemplateData || !templateSettings.dataStartCell) {
                     setError('テンプレートファイルとデータ開始セルを指定してください。');
                     return;
                 }
-                const outputBookType = excelTemplateFile.name.endsWith('.xlsm') ? 'xlsm' : 'xlsx';
+                const outputBookType = excelTemplateFile?.name.endsWith('.xlsm') ? 'xlsm' : 'xlsx';
                 const tempWb = XLSX.read(excelTemplateData, { type: 'buffer' });
                 const newWb = XLSX.read(XLSX.write(tempWb, { type: 'array', bookType: outputBookType }), { type: 'array' });
-                const unmatchedNames: string[] = [];
                 const dataBySheet = new Map<string, string[][]>();
-
-                tableData.forEach(card => {
+                const unmatchedNames: string[] = [];
+                processedData.filter((d): d is ProcessedTable => d.type === 'table').forEach((card: ProcessedTable) => {
                     const targetSheetName = findMatchingSheetName(card.title.name, newWb.SheetNames);
                     if (targetSheetName) {
                         dataBySheet.set(targetSheetName, card.data);
@@ -1182,8 +1130,8 @@ const App = () => {
                     }
                 });
 
-                const fileData = XLSX.write(newWb, { bookType: outputBookType, type: 'array' });
-                const fileName = `${excelTemplateFile.name.replace(/\.(xlsx|xls|xlsm)$/, '')}_filled.${outputBookType}`;
+                fileData = XLSX.write(newWb, { bookType: outputBookType, type: 'array' });
+                fileName = `${fileNameBase}_template_filled.${outputBookType}`;
                 const savedFilePath = await window.electronAPI.saveFile({ defaultPath: fileName }, fileData);
                 if (savedFilePath && savedFilePath.path) {
                     await window.electronAPI.openFile(savedFilePath.path);
@@ -1195,9 +1143,9 @@ const App = () => {
                 } else {
                     setError(null);
                 }
-            } else { // 新規Excelファイル作成
+            } else {
                 const wb = XLSX.utils.book_new();
-                tableData.forEach(card => {
+                processedData.filter((d): d is ProcessedTable => d.type === 'table').forEach((card: ProcessedTable) => {
                   const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\|/:*?"<>|]/g, '').substring(0, 31);
                   const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
                   const ws = XLSX.utils.aoa_to_sheet(ws_data);
@@ -1211,58 +1159,52 @@ const App = () => {
                     await window.electronAPI.openFile(savedFilePath.path);
                 }
             }
-        }
 
-        // テキストデータの一括保存
-        if (transcriptionData.length > 0) {
-            for (const item of transcriptionData) {
-                const wb = XLSX.utils.book_new();
-                const sheetName = item.fileName.replace(/\.[^/.]+$/, "").substring(0, 31) || 'Transcription';
-                const ws_data = [[item.content]];
-                const ws = XLSX.utils.aoa_to_sheet(ws_data);
-                XLSX.utils.book_append_sheet(wb, ws, sheetName);
-                const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-                const uint8FileData = new Uint8Array(fileData);
-                const fileName = `${item.fileName.replace(/\.[^/.]+$/, "")}.xlsx`;
-                const savedFilePath = await window.electronAPI.saveFile({
-                    defaultPath: fileName,
-                    filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
-                }, uint8FileData);
-                if (savedFilePath && savedFilePath.path) {
-                    await window.electronAPI.openFile(savedFilePath.path);
-                }
+        } else if (item.type === 'transcription') {
+            const textItem = item as ProcessedText;
+            const wb = XLSX.utils.book_new();
+            const sheetName = textItem.fileName.replace(/\.[^/.]+$/, "").substring(0, 31) || 'Transcription';
+            const ws_data = [[item.content]];
+            const ws = XLSX.utils.aoa_to_sheet(ws_data);
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+            const fileData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+            const uint8FileData = new Uint8Array(fileData);
+            const fileName = `${textItem.fileName.replace(/\.[^/.]+$/, "")}.xlsx`;
+            const savedFilePath = await window.electronAPI.saveFile({
+                defaultPath: fileName,
+                filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+            }, uint8FileData);
+            if (savedFilePath && savedFilePath.path) {
+                await window.electronAPI.openFile(savedFilePath.path);
             }
         }
-
     } catch (err: any) {
         setError(`一括保存中にエラーが発生しました: ${err.message}`);
         console.error(err);
     }
   };
 
-
   const handleContextMenu = (e: React.MouseEvent) => {
-    // Handsontableのコンポーネント内で右クリックされた場合は、そちらのメニューを優先する
     const target = e.target as HTMLElement;
     if (target.closest('.hot-container')) {
       return;
     }
-    // 上記以外の場合は、メインプロセスに汎用コンテキストメニューの表示を要求
     e.preventDefault();
     window.electronAPI?.showContextMenu();
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8" onContextMenu={handleContextMenu}>
+    <div className="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8">
       <div className="w-full mx-auto">
         <header className="text-center mb-8">
-          <img src={owlIcon} alt="アプリアイコン" className="w-10 h-10 mx-auto mb-4" />
-          <h1 className="text-3xl sm:text-4xl font-bold text-gray-800">ALCS文書OCR</h1>
+          <div className="flex justify-center items-center gap-4 mb-4">
+            <img src={owlIcon} alt="アプリアイコン" className="w-20 h-20" />
+            <h1 className="text-3xl sm:text-4xl font-bold text-gray-800">ALCS文書OCR</h1>
+            <img src={owlIcon} alt="アプリアイコン" className="w-20 h-20" />
+          </div>
           <p className="mt-2 text-sm text-gray-600 leading-relaxed">
             画像(PNG, JPG, PDF)をアップロードすると、AIが内容を読み取りデータ化します。<br />
-            認識結果は画面上で修正し、Excelファイルとしてダウンロード可能です。<br />
-            <span className="font-semibold text-blue-600">【ヒント】</span>
-            <span className="text-gray-700">画像の向きを正したり、仕切り線をドラッグして幅を調整すると、より快適に利用できます。</span>
+            認識結果は画面上で修正し、Excelファイルとしてダウンロード可能です。
           </p>
         </header>
 
@@ -1442,168 +1384,184 @@ const App = () => {
             </div>
           )}
 
-          {processedData.length > 0 && (
-            <div ref={resultsRef} className="p-6 bg-white rounded-lg shadow-md max-w-full">
-              <Suspense fallback={<div>Loading...</div>}> 
-                <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-                  <h2 className="text-lg font-semibold text-gray-700">3. 結果の確認と修正</h2>
-                  <div className="flex items-center gap-2">
-
-                    <button
-                        onClick={handleDownloadAll}
-                        disabled={processedData.every(d => d.type === 'transcription')}
-                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                    >
-                        <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
-                        すべてダウンロード
-                    </button>
-                  </div>
-                </div>
-
-                {tokenUsage && (tokenUsage.promptTokens > 0 || tokenUsage.outputTokens > 0) && (
-                  <div className="text-xs text-gray-500 my-2 p-2 bg-gray-50 rounded-md">
-                    <p className="font-semibold">APIトークン使用量 (参考値):</p>
-                    <p>・入力: {tokenUsage.promptTokens.toLocaleString()} トークン</p>
-                    <p>・出力: {tokenUsage.outputTokens.toLocaleString()} トークン</p>
-                  </div>
-                )}
-
-                <div className="space-y-8">
-                  {processedData.map((item, index) => {
-                    return (
-                    <div key={index} className="relative border-t pt-6 first:border-t-0 first:pt-0">
-                      <div className="absolute top-6 right-0 z-10 flex flex-col gap-1 pt-1">
-                          <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
-                              <ArrowUpIcon className="w-5 h-5 text-gray-700" />
-                          </button>
-                          <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
-                              <ArrowDownIcon className="w-5 h-5 text-gray-700" />
-                          </button>
-                      </div>
-                      <div style={{ height: 750 }}>
-                        <Allotment>
-                          <Allotment.Pane minSize={300}>
-                            {item.sourceImageBase64 && (
-                              <div className="h-full p-2 border rounded-md bg-gray-50 flex flex-col">
-                                <div className="flex justify-between items-center mb-1">
-                                  <p className="text-sm font-medium text-gray-700 truncate">
-                                    読み取り元: 
-                                    {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
-                                  </p>
-                                  <div className="flex items-center gap-1">
-                                    <button onClick={() => handleRotateImage(index, 'left')} className="p-1 rounded-full hover:bg-gray-200" title="左に90度回転">
-                                      <RotateLeftIcon className="w-4 h-4 text-gray-600" />
-                                    </button>
-                                    <button onClick={() => handleRotateImage(index, 'right')} className="p-1 rounded-full hover:bg-gray-200" title="右に90度回転">
-                                      <RotateRightIcon className="w-4 h-4 text-gray-600" />
+                    {processedData.length > 0 && (
+                      <div ref={resultsRef} className="p-6 bg-white rounded-lg shadow-md max-w-full">
+                        <PanelGroup direction="horizontal" className="h-[80vh] w-full">
+                          <Panel defaultSize={70} minSize={30}>
+                            <div className="h-full w-full overflow-auto pr-4">
+                              <Suspense fallback={<div>Loading...</div>}> 
+                                <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+                                  <h2 className="text-lg font-semibold text-gray-700">3. 結果の確認と修正</h2>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={handleDownloadAll}
+                                        disabled={processedData.every(d => d.type === 'transcription')}
+                                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                    >
+                                        <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
+                                        すべてダウンロード
                                     </button>
                                   </div>
                                 </div>
-                                <div className="w-full bg-gray-200 flex-grow min-h-0">
-                                  <img 
-                                    src={item.sourceImageBase64} 
-                                    alt="Source Document" 
-                                    className="w-full h-full object-contain transition-transform duration-200"
-                                    style={{ transform: `rotate(${item.rotation || 0}deg)`}}
-                                  />
-                                </div>
-                              </div>
-                            )}
-                          </Allotment.Pane>
-                          <Allotment.Pane minSize={400}>
-                            <div className="h-full overflow-x-auto">
-                              {item.type === 'table' ? (
-                                <>
-                                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
-                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
-                                          <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
-                                          <span className="text-gray-500">-</span>
-                                          <div className="flex items-center gap-1.5 flex-grow min-w-0">
-                                              {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                              <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                          </div>
-                                      </div>
-                                      <div className="w-full flex justify-end sm:w-auto sm:justify-start">
-                                          <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のテーブルをダウンロード`}>
-                                              <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                              Excelでダウンロード
+          
+                                {tokenUsage && (tokenUsage.promptTokens > 0 || tokenUsage.outputTokens > 0) && (
+                                  <div className="text-xs text-gray-500 my-2 p-2 bg-gray-50 rounded-md">
+                                    <p className="font-semibold">APIトークン使用量 (参考値):</p>
+                                    <p>・入力: {tokenUsage.promptTokens.toLocaleString()} トークン</p>
+                                    <p>・出力: {tokenUsage.outputTokens.toLocaleString()} トークン</p>
+                                  </div>
+                                )}
+          
+                                <div className="space-y-8">
+                                  {processedData.map((item, index) => {
+                                    return (
+                                    <div key={index} className="relative border-t pt-6 first:border-t-0 first:pt-0">
+                                      <div className="absolute top-6 right-0 z-10 flex flex-col gap-1 pt-1">
+                                          <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
+                                              <ArrowUpIcon className="w-5 h-5 text-gray-700" />
+                                          </button>
+                                          <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
+                                              <ArrowDownIcon className="w-5 h-5 text-gray-700" />
                                           </button>
                                       </div>
-                                  </div>
-                                  <DataTable 
-                                      cardIndex={index} 
-                                      headers={item.headers}
-                                      data={item.data}
-                                      errors={item.errors}
-                                      onDataChange={handleDataChange} 
-                                      onRowCreate={handleRowCreate}
-                                      onRowRemove={handleRowRemove}
-                                      onColCreate={handleColCreate}
-                                      onColRemove={handleColRemove}
-                                  />
-                                </>
-                              ) : item.type === 'timecard' ? (
-                                  <>
-                                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
-                                          <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
-                                              <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
-                                              <span className="text-gray-500">-</span>
-                                              <div className="flex items-center gap-1.5 flex-grow min-w-0">
-                                                  {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                                  <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                      <div style={{ height: 750 }}>
+                                        <Allotment>
+                                          <Allotment.Pane minSize={300}>
+                                            {item.sourceImageBase64 && (
+                                              <div className="h-full p-2 border rounded-md bg-gray-50 flex flex-col">
+                                                <div className="flex justify-between items-center mb-1">
+                                                  <p className="text-sm font-medium text-gray-700 truncate">
+                                                    読み取り元: 
+                                                    {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
+                                                  </p>
+                                                  <div className="flex items-center gap-1">
+                                                    <button onClick={() => handleRotateImage(index, 'left')} className="p-1 rounded-full hover:bg-gray-200" title="左に90度回転">
+                                                      <RotateLeftIcon className="w-4 h-4 text-gray-600" />
+                                                    </button>
+                                                    <button onClick={() => handleRotateImage(index, 'right')} className="p-1 rounded-full hover:bg-gray-200" title="右に90度回転">
+                                                      <RotateRightIcon className="w-4 h-4 text-gray-600" />
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                                <div className="w-full bg-gray-200 flex-grow min-h-0">
+                                                  <img 
+                                                    src={item.sourceImageBase64} 
+                                                    alt="Source Document" 
+                                                    className="w-full h-full object-contain transition-transform duration-200"
+                                                    style={{ transform: `rotate(${item.rotation || 0}deg)`}}
+                                                  />
+                                                </div>
                                               </div>
-                                          </div>
-                                          <div className="flex items-center self-end sm:self-center gap-2">
-                                              {outputMode === 'template' && excelTemplateFile?.path ? (
-                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
-                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                      テンプレートに転記
-                                                  </button>
+                                            )}
+                                          </Allotment.Pane>
+                                          <Allotment.Pane minSize={400}>
+                                            <div className="h-full overflow-x-auto">
+                                              {item.type === 'table' ? (
+                                                <>
+                                                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
+                                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
+                                                          <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
+                                                          <span className="text-gray-500">-</span>
+                                                          <div className="flex items-center gap-1.5 flex-grow min-w-0">
+                                                              {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                                              <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                                          </div>
+                                                      </div>
+                                                      <div className="w-full flex justify-end sm:w-auto sm:justify-start">
+                                                          <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のテーブルをダウンロード`}>
+                                                              <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                              Excelでダウンロード
+                                                          </button>
+                                                      </div>
+                                                  </div>
+                                                  <DataTable 
+                                                      cardIndex={index} 
+                                                      headers={item.headers}
+                                                      data={item.data}
+                                                      errors={item.errors}
+                                                      onDataChange={handleDataChange} 
+                                                      onRowCreate={handleRowCreate}
+                                                      onRowRemove={handleRowRemove}
+                                                      onColCreate={handleColCreate}
+                                                      onColRemove={handleColRemove}
+                                                  />
+                                                </>
+                                              ) : item.type === 'timecard' ? (
+                                                  <>
+                                                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
+                                                          <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
+                                                              <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
+                                                              <span className="text-gray-500">-</span>
+                                                              <div className="flex items-center gap-1.5 flex-grow min-w-0">
+                                                                  {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                                                  <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                                              </div>
+                                                          </div>
+                                                          <div className="flex items-center self-end sm:self-center gap-2">
+                                                              {outputMode === 'template' && excelTemplateFile?.path ? (
+                                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
+                                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                                      テンプレートに転記
+                                                                  </button>
+                                                              ) : (
+                                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
+                                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                                      新規Excelでダウンロード
+                                                                  </button>
+                                                              )}
+                                                          </div>
+                                                      </div>
+                                                      <DataTable 
+                                                          cardIndex={index} 
+                                                          headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
+                                                          data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
+                                                          errors={item.errors}
+                                                          onDataChange={handleDataChange} 
+                                                          onRowCreate={handleRowCreate}
+                                                          onRowRemove={handleRowRemove}
+                                                          onColCreate={handleColCreate}
+                                                          onColRemove={handleColRemove}
+                                                      />                            </>
                                               ) : (
-                                                  <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
-                                                      <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                      新規Excelでダウンロード
-                                                  </button>
+                                                <>
+                                                  <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                                          <DocumentTextIcon className="h-6 w-6 text-gray-600" />
+                                                          <span>{item.fileName}</span>
+                                                      </div>
+                                                      <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
+                                                          <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                          Excelファイルで保存
+                                                      </button>
+                                                  </div>
+                                                  <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
+                                                </>
                                               )}
-                                          </div>
+                                            </div>
+                                          </Allotment.Pane>
+                                        </Allotment>
                                       </div>
-                                      <DataTable 
-                                          cardIndex={index} 
-                                          headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
-                                          data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
-                                          errors={item.errors}
-                                          onDataChange={handleDataChange} 
-                                          onRowCreate={handleRowCreate}
-                                          onRowRemove={handleRowRemove}
-                                          onColCreate={handleColCreate}
-                                          onColRemove={handleColRemove}
-                                      />                            </>
-                              ) : (
-                                <>
-                                  <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                          <DocumentTextIcon className="h-6 w-6 text-gray-600" />
-                                          <span>{item.fileName}</span>
-                                      </div>
-                                      <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
-                                          <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                          Excelファイルで保存
-                                      </button>
-                                  </div>
-                                  <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
-                                </>
-                              )}
+                                    </div>
+                                  )})
+                                }
+                                </div>
+                              </Suspense>
                             </div>
-                          </Allotment.Pane>
-                        </Allotment>
+                          </Panel>
+                          <PanelResizeHandle className="w-2 bg-gray-200 hover:bg-blue-500 transition-colors" />
+                          <Panel defaultSize={30} minSize={20}>
+                            <div className="h-full w-full overflow-auto pl-4">
+                              <GrokAssistant 
+                                spreadsheetData={processedData}
+                                suggestedOperations={suggestedOperations}
+                                isLoading={isSuggestionLoading}
+                                onExecuteOperation={handleGrokOperation} 
+                              />
+                            </div>
+                          </Panel>
+                        </PanelGroup>
                       </div>
-                    </div>
-                  )})
-                }
-                </div>
-              </Suspense>
-            </div>
-          )}
+                    )}
         </main>
         
         <footer className="text-center mt-12 py-6 border-t border-gray-200 space-y-4">
