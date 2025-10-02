@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { processDocumentPages } from './services/geminiService';
-import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay, SuggestedOperation } from './types';
+import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay, SuggestedOperation, ChatMessage } from './types';
 import { withRetry, transformTimecardJsonForExcelHandler, readFileAsArrayBuffer } from './services/utils';
 import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, RotateLeftIcon, RotateRightIcon } from './components/icons';
 
@@ -17,7 +17,10 @@ import { GrokAssistant } from './components/GrokAssistant';
 
 const getBasename = (filePath: string): string => {
   if (!filePath) return '';
-  return filePath.substring(filePath.lastIndexOf('/') + 1).substring(filePath.lastIndexOf('\\') + 1);
+  const lastSlash = filePath.lastIndexOf('/');
+  const lastBackslash = filePath.lastIndexOf('\\');
+  const lastSeparator = Math.max(lastSlash, lastBackslash);
+  return filePath.substring(lastSeparator + 1);
 };
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
@@ -64,7 +67,7 @@ const MultiFileUploader: React.FC<{
     <div className="w-full">
       <label
         htmlFor="file-upload"
-        className="relative flex flex-col justify-center items-center w-full min-h-[16rem] p-4 transition bg-white border-2 border-gray-300 border-dashed rounded-lg appearance-none focus:outline-none"
+        className="relative flex flex-col justify-center items-center w-full min-h-[16rem] p-4 transition bg-white border-2 border-gray-300 border-dashed rounded-lg appearance-none cursor-pointer hover:border-blue-400 focus:outline-none"
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
@@ -250,6 +253,22 @@ const findMatchingSheetName = (fullName: string, sheetNames: string[]): string |
     return null; // 名字のみで一致するシートが見つからなかった場合、nullを返す
 };
 
+const extractJson = (text: string): any | null => {
+  if (!text) return null;
+  try {
+    const fenced = text.match(/```json\s*([\s\S]*?)```/i);
+    if (fenced?.[1]) {
+      return JSON.parse(fenced[1]);
+    }
+    const firstObject = text.match(/\{[\s\S]*\}/);
+    if (firstObject?.[0]) {
+      return JSON.parse(firstObject[0]);
+    }
+  } catch (error) {
+    console.warn('Failed to parse JSON from text:', error);
+  }
+  return null;
+};
 
 const App = () => {
   const [previews, setPreviews] = useState<FilePreview[]>([]);
@@ -277,8 +296,11 @@ const App = () => {
   const [templateSettings, setTemplateSettings] = useState({ dataStartCell: 'A1' });
 
   // --- Grok関連のState ---
+  const [grokMessages, setGrokMessages] = useState<ChatMessage[]>([]);
+  const [grokUserInput, setGrokUserInput] = useState('');
   const [suggestedOperations, setSuggestedOperations] = useState<SuggestedOperation[]>([]);
   const [isSuggestionLoading, setIsSuggestionLoading] = useState(false);
+  const [isGrokManualLoading, setIsGrokManualLoading] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -558,47 +580,8 @@ ${JSON.stringify(activeSpreadsheet, null, 2)}
 3.  **具体的な操作の考案とJSON出力:**
     *   判断した会計ステップを、下記の「利用可能な操作タイプ」を組み合わせた具体的な操作に変換します。最大3つまで提案してください。
     *   **建設的な操作（仕訳、分類、計算など）を、破壊的な操作（削除など）よりも優先してください。** 削除は、明らかに無関係なデータ（例：誤ってOCRされたヘッダーやフッターのテキスト）に対してのみ提案してください。
-    *   提案は、"operations"キーを持つ純粋なJSONオブジェクトとして返却してください。JSON構造の外に、他のテキスト、マークダウン、説明を含めないでください。
-
-JSON出力構造:
-{
-  "operations": [
-    {
-      "name": "ユーザー向けの簡潔で分かりやすい日本語のボタンラベル (例: '買掛金として仕訳する')",
-      "operation": "下記のリストから選択した操作タイプ",
-      "params": { "key1": "value1", "key2": "value2" }
-    }
-  ]
-}
-
-利用可能な操作タイプ ("operation"):
-- **create_journal_entry**: 行を標準的な日本の複式簿記の仕訳形式に変換します。日本の勘定科目（例: 売掛金, 買掛金, 旅費交通費, 消耗品費）を推測し、借方/貸方列と勘定科目列を追加します。
-- **categorize_items**: '勘定科目'列を追加し、各行の内容に基づいて日本の会計基準に沿った項目を分類します。
-- **calculate_totals**: 指定された数値列を合計し、'合計'行を追加します。消費税の計算も考慮できる場合は提案に含めてください。
-- **flag_inconsistencies**: '備考'列を追加し、日本の商習慣や会計規則から見て潜在的なエラー、外れ値、またはレビューが必要な項目（例：日付の不整合、金額の異常値）にフラグを立てます。
-- **format_for_import**: 日本の主要な会計ソフトウェア（例: freee, Money Forward クラウド会計）へのインポートに適した形式にデータを再フォーマットします。
-- **summarize_data**: データを分析し、チャット応答で概要を説明します。
-- **delete_empty_rows**: 空または空白セルのみを含むすべての行を削除します。
-- **delete_rows**: 明らかに不要な特定の行を削除します。(paramsに'row_indices'が必要)
-- **delete_cols**: 明らかに不要な特定の列を削除します。(paramsに'col_indices'が必要)
+    *   提案は、
 `;
-
-    const extractJson = (text: string): any | null => {
-      if (!text) return null;
-      try {
-        const fenced = text.match(/```json\s*([\s\S]*?)```/i);
-        if (fenced?.[1]) {
-          return JSON.parse(fenced[1]);
-        }
-        const firstObject = text.match(/\{[\s\S]*\}/);
-        if (firstObject?.[0]) {
-          return JSON.parse(firstObject[0]);
-        }
-      } catch (error) {
-        console.warn('Failed to parse JSON from text:', error);
-      }
-      return null;
-    };
 
     try {
       const result = await window.electronAPI.invokeGrokApi({ prompt });
@@ -850,7 +833,7 @@ JSON出力構造:
       if (!item) return newData;
       if (item.type === 'table' && item.data[rowIndex]) {
         item.data[rowIndex][cellIndex] = value;
-      } else if (item.type === 'timecard' && item.days && item.days[rowIndex]) { // タイムカード形式でも既存の行のみを更新
+      } else if (item.type === 'timecard' && item.days) { // タイムカード形式でも既存の行のみを更新
           const day = item.days[rowIndex];
           const keys: (keyof TimecardDay)[] = ['date', 'dayOfWeek', 'morningStart', 'morningEnd', 'afternoonStart', 'afternoonEnd'];
           const key = keys[cellIndex];
@@ -996,66 +979,66 @@ JSON出力構造:
     });
   };
 
-  const handleGrokOperation = (operation: { operation: string; params: any }) => {
+  const handleGrokOperation = (operation: { operation: string; params: any }, targetIndices: number[] | 'all') => {
     if (!operation || !operation.operation) return;
 
-    const targetCardIndex = processedData.findIndex(d => d.type === 'table' || d.type === 'timecard');
-    if (targetCardIndex === -1) {
-        setError("Grokが操作できるテーブルデータが見つかりません。");
-        return;
-    }
-
     const { operation: opName, params } = operation;
-    console.log(`Executing Grok operation: ${opName}`, params);
+    console.log(`Executing Grok operation: ${opName} on targets: ${targetIndices}`, JSON.stringify(params, null, 2));
 
-    // Create a new copy of the data to modify
-    const newData = JSON.parse(JSON.stringify(processedData));
-    const targetCard = newData[targetCardIndex];
+    let newData = JSON.parse(JSON.stringify(processedData));
+    let updateRequired = false;
 
-    if (targetCard.type !== 'table') {
-        setError(`操作「${opName}」はテーブル形式のデータにのみ対応しています。`);
-        return;
-    }
+    const indicesToProcess = targetIndices === 'all' 
+      ? processedData.map((_, i) => i) 
+      : targetIndices;
 
-    switch (opName) {
+    indicesToProcess.forEach(cardIndex => {
+      const targetCard = newData[cardIndex];
+      if (!targetCard || targetCard.type !== 'table') {
+        return; // Skip non-table cards
+      }
+
+      switch (opName) {
+        case 'add_column_with_data': {
+            if (params.header && params.data && Array.isArray(params.data)) {
+                const header = String(params.header);
+                if (!targetCard.headers.includes(header)) {
+                    targetCard.headers.push(header);
+                    targetCard.data.forEach((row: string[], rowIndex: number) => {
+                        row.push(String(params.data[rowIndex] ?? ''));
+                    });
+                    updateRequired = true;
+                } else {
+                    // If column exists, maybe update data? For now, we skip.
+                    console.warn(`Column "${header}" already exists. Skipping.`);
+                }
+            } else {
+                setError(`「${opName}」操作のパラメータが不完全です。'header'と'data'が必要です。`);
+            }
+            break;
+        }
         case 'delete_rows': {
             if (params.row_indices && Array.isArray(params.row_indices)) {
-                // Sort indices in descending order to avoid shifting issues
                 const sortedIndices = [...params.row_indices].sort((a, b) => b - a);
                 sortedIndices.forEach((rowIndex: number) => {
                     if (rowIndex >= 0 && rowIndex < targetCard.data.length) {
                         targetCard.data.splice(rowIndex, 1);
+                        updateRequired = true;
                     }
                 });
-                setProcessedData(newData);
             }
             break;
         }
-
-        case 'delete_cols': {
-            if (params.col_indices && Array.isArray(params.col_indices)) {
-                const sortedIndices = [...params.col_indices].sort((a, b) => b - a);
-                sortedIndices.forEach((colIndex: number) => {
-                    if (colIndex >= 0 && colIndex < targetCard.headers.length) {
-                        targetCard.headers.splice(colIndex, 1);
-                        targetCard.data.forEach((row: string[]) => {
-                            row.splice(colIndex, 1);
-                        });
-                    }
-                });
-                setProcessedData(newData);
-            }
-            break;
-        }
-        
         case 'delete_empty_rows': {
+            const originalRowCount = targetCard.data.length;
             targetCard.data = targetCard.data.filter((row: string[]) => 
                 row.some(cell => cell && String(cell).trim() !== '')
             );
-            setProcessedData(newData);
+            if (targetCard.data.length !== originalRowCount) {
+                updateRequired = true;
+            }
             break;
         }
-
         case 'calculate_totals': {
             if (params.columns && Array.isArray(params.columns) && params.columns.length > 0) {
                 const newTotalRow = new Array(targetCard.headers.length).fill('');
@@ -1071,7 +1054,6 @@ JSON出力構造:
                         
                         newTotalRow[colIndex] = total.toLocaleString();
                         if (!hasCalculated) {
-                            // Find a good place for the "Total" label, usually the first or a descriptive column
                             const labelCol = Math.max(0, colIndex - 1);
                             newTotalRow[labelCol] = '合計';
                             hasCalculated = true;
@@ -1081,68 +1063,126 @@ JSON出力構造:
                 
                 if (hasCalculated) {
                     targetCard.data.push(newTotalRow);
-                    setProcessedData(newData);
+                    updateRequired = true;
                 }
+            } else {
+                console.warn('calculate_totals was called without valid `columns` parameter.', params);
+                setError('合計を計算する列の指定がAIからありませんでした。');
             }
             break;
         }
-
         case 'create_journal_entry': {
             const newHeaders = ['借方勘定科目', '借方金額', '貸方勘定科目', '貸方金額', '摘要'];
-            // Add new headers if they don't exist
             newHeaders.forEach(h => {
                 if (!targetCard.headers.includes(h)) {
                     targetCard.headers.push(h);
+                    updateRequired = true;
                 }
             });
-            // Add empty cells for new columns in each row
             targetCard.data.forEach((row: string[]) => {
                 while (row.length < targetCard.headers.length) {
                     row.push('');
                 }
             });
-            setProcessedData(newData);
             break;
         }
-
-        case 'categorize_items': {
-            const categoryHeader = 'カテゴリ';
-            if (!targetCard.headers.includes(categoryHeader)) {
-                targetCard.headers.push(categoryHeader);
-                targetCard.data.forEach((row: string[]) => {
-                    row.push('');
-                });
-                setProcessedData(newData);
-            }
-            break;
-        }
-
-        // Legacy singular operations
-        case 'delete_row':
-            if (params.row_index !== undefined) {
-                handleRowRemove(targetCardIndex, params.row_index, 1);
-            }
-            break;
-
-        case 'delete_col':
-            if (params.col_index !== undefined) {
-                handleColRemove(targetCardIndex, params.col_index, 1);
-            } else if (params.col_name) {
-                const colIndex = targetCard.headers.findIndex((h: string) => h === params.col_name);
-                if (colIndex > -1) {
-                    handleColRemove(targetCardIndex, colIndex, 1);
-                } else {
-                    setError(`Grokが指定した列名「${params.col_name}」が見つかりませんでした。`);
-                }
-            }
-            break;
-
         default:
             setError(`操作「${opName}」はまだ実装されていません。`);
             console.warn(`Unknown Grok operation: ${opName}`);
             break;
+      }
+    });
+
+    if (updateRequired) {
+      setProcessedData(newData);
     }
   };
+
+  const handleGrokSendMessage = async () => {
+    const trimmedInput = grokUserInput.trim();
+    if (!trimmedInput || !window.electronAPI?.invokeGrokApi) return;
+
+    setGrokMessages(prev => [...prev, { role: 'user', content: trimmedInput }]);
+    setGrokUserInput('');
+    setIsGrokManualLoading(true);
+
+    // Simple target parsing
+    const match = trimmedInput.match(/(1|１|一|最初)つ?目/); // "1st", "first"
+    let targetIndex: number | null = null;
+    let targetData: ProcessedData | null = null;
+
+    if (match) {
+      targetIndex = 0; // Simple case for now
+    }
+
+    const spreadsheets = processedData.filter(d => d.type === 'table' || d.type === 'timecard');
+    if (spreadsheets.length === 0) {
+      setGrokMessages(prev => [...prev, { role: 'assistant', content: '操作対象のスプレッドシートがありません。'}]);
+      setIsGrokManualLoading(false);
+      return;
+    }
+
+    if (targetIndex !== null && spreadsheets[targetIndex]) {
+      targetData = spreadsheets[targetIndex];
+    } else {
+      // Default to first spreadsheet if no specific target is found for now
+      targetData = spreadsheets[0];
+    }
+
+    const buildManualPrompt = (input: string, data: ProcessedData) => `
+ユーザーの要求: "${input}"
+
+現在のスプレッドシートデータ (JSON):
+${JSON.stringify(data, null, 2)}
+
+---
+上記の要求とデータに基づき、操作のためのJSONオブジェクトを一つだけ返してください。
+JSONには "operation" と "params" キーを含める必要があります。
+要求が会話形式の場合は、JSON内でチャットメッセージとして応答してください: {"operation": "chat", "response": "ここに返答メッセージを記述"}。
+JSON以外のテキストやマークダウンは含めないでください。
+`;
+
+    try {
+      const prompt = buildManualPrompt(trimmedInput, targetData);
+      const result = await window.electronAPI.invokeGrokApi({ prompt });
+
+      if (!result.success) {
+        const errorMessage = result.error ?? 'AIアシスタントからの応答がありませんでした。';
+        setGrokMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${errorMessage}` }]);
+        return;
+      }
+
+      const content = result.data?.choices?.[0]?.message?.content ?? '';
+      const parsed = extractJson(content);
+
+      if (parsed && typeof parsed === 'object' && 'operation' in parsed) {
+        const operationData = parsed as SuggestedOperation;
+
+        if (operationData.operation === 'chat') {
+          setGrokMessages(prev => [...prev, { role: 'assistant', content: (operationData.params as any)?.response ?? '空のチャット応答を受信しました。' }]);
+          return;
+        }
+
+        if (operationData.operation && operationData.operation !== 'chat') {
+          // If a target was specified, apply to that index. Otherwise, apply to all.
+          const originalIndexOfTarget = processedData.indexOf(targetData);
+          const target = targetIndex !== null ? [originalIndexOfTarget] : 'all';
+          handleGrokOperation(operationData, target);
+          setGrokMessages(prev => [...prev, { role: 'assistant', content: '要求された操作を実行しました。' }]);
+          return;
+        }
+      }
+
+      const fallback = content || 'AIは応答しましたが、有効な操作を特定できませんでした。';
+      setGrokMessages(prev => [...prev, { role: 'assistant', content: fallback }]);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setGrokMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${errorMessage}` }]);
+    } finally {
+      setIsGrokManualLoading(false);
+    }
+  };
+
 
   const handleDownloadAll = async () => {
     for (const item of processedData) {
@@ -1522,178 +1562,175 @@ JSON出力構造:
             </div>
           )}
 
-                    {processedData.length > 0 && (
-                      <div ref={resultsRef} className="p-6 bg-white rounded-lg shadow-md max-w-full">
-                        <PanelGroup direction="horizontal" className="h-[80vh] w-full">
-                          <Panel defaultSize={70} minSize={30}>
-                            <div className="h-full w-full overflow-auto pr-4">
-                              <Suspense fallback={<div>Loading...</div>}> 
-                                <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-                                  <h2 className="text-lg font-semibold text-gray-700">3. 結果の確認と修正</h2>
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={handleDownloadAll}
-                                        disabled={processedData.every(d => d.type === 'transcription')}
-                                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                                    >
-                                        <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
-                                        すべてダウンロード
-                                    </button>
-                                  </div>
+          {processedData.length > 0 && (
+            <div className="mt-6">
+              <div className="p-6 bg-white rounded-lg shadow-md max-w-full mb-6">
+                <GrokAssistant 
+                  suggestedOperations={suggestedOperations}
+                  isLoading={isSuggestionLoading || isGrokManualLoading}
+                  messages={grokMessages}
+                  userInput={grokUserInput}
+                  onUserInput={setGrokUserInput}
+                  onSendMessage={handleGrokSendMessage}
+                  onExecuteOperation={handleGrokOperation} 
+                />
+              </div>
+
+              <div ref={resultsRef}>
+                <Suspense fallback={<div>Loading...</div>}> 
+                  <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+                    <h2 className="text-lg font-semibold text-gray-700">3. 結果の確認と修正</h2>
+                    <div className="flex items-center gap-2">
+                      <button
+                          onClick={handleDownloadAll}
+                          disabled={processedData.every(d => d.type === 'transcription')}
+                          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                      >
+                          <DownloadIcon className="-ml-1 mr-2 h-5 w-5" />
+                          すべてダウンロード
+                      </button>
+                    </div>
+                  </div>
+
+                  {tokenUsage && (tokenUsage.promptTokens > 0 || tokenUsage.outputTokens > 0) && (
+                    <div className="text-xs text-gray-500 my-2 p-2 bg-gray-50 rounded-md">
+                      <p className="font-semibold">APIトークン使用量 (参考値):</p>
+                      <p>・入力: {tokenUsage.promptTokens.toLocaleString()} トークン</p>
+                      <p>・出力: {tokenUsage.outputTokens.toLocaleString()} トークン</p>
+                    </div>
+                  )}
+
+                  <div className="space-y-8">
+                    {processedData.map((item, index) => {
+                      return (
+                      <div key={index} className="relative border-t pt-6 first:border-t-0 first:pt-0">
+                        <div className="absolute top-6 right-0 z-10 flex flex-col gap-1 pt-1">
+                            <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
+                                <ArrowUpIcon className="w-5 h-5 text-gray-700" />
+                            </button>
+                            <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
+                                <ArrowDownIcon className="w-5 h-5 text-gray-700" />
+                            </button>
+                        </div>
+                        <div className="flex h-full">
+                          {item.sourceImageBase64 && (
+                            <div className="w-1/2 p-2 border rounded-md bg-gray-50 flex flex-col">
+                              <div className="flex justify-between items-center mb-1">
+                                <p className="text-sm font-medium text-gray-700 truncate">
+                                  読み取り元: 
+                                  {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
+                                </p>
+                                <div className="flex items-center gap-1">
+                                  <button onClick={() => handleRotateImage(index, 'left')} className="p-1 rounded-full hover:bg-gray-200" title="左に90度回転">
+                                    <RotateLeftIcon className="w-4 h-4 text-gray-600" />
+                                  </button>
+                                  <button onClick={() => handleRotateImage(index, 'right')} className="p-1 rounded-full hover:bg-gray-200" title="右に90度回転">
+                                    <RotateRightIcon className="w-4 h-4 text-gray-600" />
+                                  </button>
                                 </div>
-          
-                                {tokenUsage && (tokenUsage.promptTokens > 0 || tokenUsage.outputTokens > 0) && (
-                                  <div className="text-xs text-gray-500 my-2 p-2 bg-gray-50 rounded-md">
-                                    <p className="font-semibold">APIトークン使用量 (参考値):</p>
-                                    <p>・入力: {tokenUsage.promptTokens.toLocaleString()} トークン</p>
-                                    <p>・出力: {tokenUsage.outputTokens.toLocaleString()} トークン</p>
-                                  </div>
-                                )}
-          
-                                <div className="space-y-8">
-                                  {processedData.map((item, index) => {
-                                    return (
-                                    <div key={index} className="relative border-t pt-6 first:border-t-0 first:pt-0">
-                                      <div className="absolute top-6 right-0 z-10 flex flex-col gap-1 pt-1">
-                                          <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
-                                              <ArrowUpIcon className="w-5 h-5 text-gray-700" />
-                                          </button>
-                                          <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
-                                              <ArrowDownIcon className="w-5 h-5 text-gray-700" />
-                                          </button>
-                                      </div>
-                                      <div className="flex h-full">
-                                        {item.sourceImageBase64 && (
-                                          <div className="w-1/2 p-2 border rounded-md bg-gray-50 flex flex-col">
-                                            <div className="flex justify-between items-center mb-1">
-                                              <p className="text-sm font-medium text-gray-700 truncate">
-                                                読み取り元: 
-                                                {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
-                                              </p>
-                                              <div className="flex items-center gap-1">
-                                                <button onClick={() => handleRotateImage(index, 'left')} className="p-1 rounded-full hover:bg-gray-200" title="左に90度回転">
-                                                  <RotateLeftIcon className="w-4 h-4 text-gray-600" />
-                                                </button>
-                                                <button onClick={() => handleRotateImage(index, 'right')} className="p-1 rounded-full hover:bg-gray-200" title="右に90度回転">
-                                                  <RotateRightIcon className="w-4 h-4 text-gray-600" />
-                                                </button>
-                                              </div>
-                                            </div>
-                                            <div className="w-full bg-gray-200 flex-grow min-h-0">
-                                              <img 
-                                                src={item.sourceImageBase64} 
-                                                alt="Source Document" 
-                                                className="w-full h-full object-contain transition-transform duration-200"
-                                                style={{ transform: `rotate(${item.rotation || 0}deg)`}}
-                                              />
-                                            </div>
-                                          </div>
-                                        )}
-                                        <div className="w-1/2 h-full overflow-x-auto">
-                                          {item.type === 'table' ? (
-                                            <>
-                                              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
-                                                  <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
-                                                      <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
-                                                      <span className="text-gray-500">-</span>
-                                                      <div className="flex items-center gap-1.5 flex-grow min-w-0">
-                                                          {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                                          <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                                      </div>
-                                                  </div>
-                                                  <div className="w-full flex justify-end sm:w-auto sm:justify-start">
-                                                      <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のテーブルをダウンロード`}>
-                                                          <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                          Excelでダウンロード
-                                                      </button>
-                                                  </div>
-                                              </div>
-                                              <DataTable 
-                                                  cardIndex={index} 
-                                                  headers={item.headers}
-                                                  data={item.data}
-                                                  errors={item.errors}
-                                                  onDataChange={handleDataChange} 
-                                                  onRowCreate={handleRowCreate}
-                                                  onRowRemove={handleRowRemove}
-                                                  onColCreate={handleColCreate}
-                                                  onColRemove={handleColRemove}
-                                              />
-                                            </>
-                                          ) : item.type === 'timecard' ? (
-                                              <>
-                                                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
-                                                      <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
-                                                          <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
-                                                          <span className="text-gray-500">-</span>
-                                                          <div className="flex items-center gap-1.5 flex-grow min-w-0">
-                                                              {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
-                                                              <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
-                                                          </div>
-                                                      </div>
-                                                      <div className="flex items-center self-end sm:self-center gap-2">
-                                                          {outputMode === 'template' && excelTemplateFile?.path ? (
-                                                              <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
-                                                                  <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                                  テンプレートに転記
-                                                              </button>
-                                                          ) : (
-                                                              <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
-                                                                  <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                                  新規Excelでダウンロード
-                                                              </button>
-                                                          )}
-                                                      </div>
-                                                  </div>
-                                                  <DataTable 
-                                                      cardIndex={index} 
-                                                      headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
-                                                      data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
-                                                      errors={item.errors}
-                                                      onDataChange={handleDataChange} 
-                                                      onRowCreate={handleRowCreate}
-                                                      onRowRemove={handleRowRemove}
-                                                      onColCreate={handleColCreate}
-                                                      onColRemove={handleColRemove}
-                                                  />                            </>
-                                            ) : (
-                                              <>
-                                                <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-                                                    <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
-                                                        <DocumentTextIcon className="h-6 w-6 text-gray-600" />
-                                                        <span>{item.fileName}</span>
-                                                    </div>
-                                                    <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
-                                                        <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                        Excelファイルで保存
-                                                    </button>
-                                                </div>
-                                                <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
-                                              </>
-                                            )}
-                                          </div>
+                              </div>
+                              <div className="w-full bg-gray-200 flex-grow min-h-0">
+                                <img 
+                                  src={item.sourceImageBase64} 
+                                  alt="Source Document" 
+                                  className="w-full h-full object-contain transition-transform duration-200"
+                                  style={{ transform: `rotate(${item.rotation || 0}deg)`}}
+                                />
+                              </div>
+                            </div>
+                          )}
+                          <div className="w-1/2 h-full overflow-x-auto">
+                            {item.type === 'table' ? (
+                              <>
+                                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
+                                    <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
+                                        <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
+                                        <span className="text-gray-500">-</span>
+                                        <div className="flex items-center gap-1.5 flex-grow min-w-0">
+                                            {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                            <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
                                         </div>
                                     </div>
-                                  )})
-                                }
+                                    <div className="w-full flex justify-end sm:w-auto sm:justify-start">
+                                        <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のテーブルをダウンロード`}>
+                                            <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                            Excelでダウンロード
+                                        </button>
+                                    </div>
                                 </div>
-                              </Suspense>
-                            </div>
-                          </Panel>
-                          <PanelResizeHandle className="w-2 bg-gray-200 hover:bg-blue-500 transition-colors" />
-                          <Panel defaultSize={30} minSize={20}>
-                            <div className="h-full w-full overflow-auto pl-4">
-                              <GrokAssistant 
-                                spreadsheetData={processedData}
-                                suggestedOperations={suggestedOperations}
-                                isLoading={isSuggestionLoading}
-                                onExecuteOperation={handleGrokOperation} 
-                              />
-                            </div>
-                          </Panel>
-                        </PanelGroup>
+                                <DataTable 
+                                    cardIndex={index} 
+                                    headers={item.headers}
+                                    data={item.data}
+                                    errors={item.errors}
+                                    onDataChange={handleDataChange} 
+                                    onRowCreate={handleRowCreate}
+                                    onRowRemove={handleRowRemove}
+                                    onColCreate={handleColCreate}
+                                    onColRemove={handleColRemove}
+                                />
+                              </>
+                            ) : item.type === 'timecard' ? (
+                                <>
+                                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
+                                        <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow min-w-0">
+                                            <input type="text" value={item.title.yearMonth} onChange={(e) => handleTitleChange(index, 'yearMonth', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-auto" aria-label="Edit Year and Month" />
+                                            <span className="text-gray-500">-</span>
+                                            <div className="flex items-center gap-1.5 flex-grow min-w-0">
+                                                {item.nameCorrected && <SparklesIcon className="h-5 w-5 text-blue-500 flex-shrink-0" title="名簿により自動修正" />}
+                                                <input type="text" value={item.title.name} onChange={(e) => handleTitleChange(index, 'name', e.target.value)} className="p-1 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded-md bg-transparent w-full" aria-label="Edit Name" />
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center self-end sm:self-center gap-2">
+                                            {outputMode === 'template' && excelTemplateFile?.path ? (
+                                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードをテンプレートに転記`}>
+                                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                    テンプレートに転記
+                                                </button>
+                                            ) : (
+                                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
+                                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                                    新規Excelでダウンロード
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <DataTable 
+                                        cardIndex={index} 
+                                        headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
+                                        data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
+                                        errors={item.errors}
+                                        onDataChange={handleDataChange} 
+                                        onRowCreate={handleRowCreate}
+                                        onRowRemove={handleRowRemove}
+                                        onColCreate={handleColCreate}
+                                        onColRemove={handleColRemove}
+                                    />                            </>
+                            ) : (
+                              <>
+                                <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                                    <div className="flex items-center gap-2 text-xl font-bold text-gray-800 flex-grow mr-4 min-w-[200px]">
+                                        <DocumentTextIcon className="h-6 w-6 text-gray-600" />
+                                        <span>{item.fileName}</span>
+                                    </div>
+                                    <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.fileName}をダウンロード`}>
+                                        <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                                        Excelファイルで保存
+                                    </button>
+                                </div>
+                                <TranscriptionView cardIndex={index} content={item.content} onContentChange={handleContentChange} />
+                              </>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    )}
+                    )})
+                  }
+                  </div>
+                </Suspense>
+              </div>
+            </div>
+          )}
         </main>
         
         <footer className="text-center mt-12 py-6 border-t border-gray-200 space-y-4">

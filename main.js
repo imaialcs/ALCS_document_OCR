@@ -344,7 +344,11 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
     } catch (error) {
       log.error('Gemini OCR Error:', error);
       console.error('Gemini OCR Error in main process:', error);
-      throw new Error(`AI処理中にエラーが発生しました: ${error.message}`);
+      const errorMessage = error.message || '';
+      if (errorMessage.includes('429') && (errorMessage.includes('RESOURCE_EXHAUSTED') || errorMessage.includes('exceeded your current quota'))) {
+        throw new Error('Gemini APIの無料利用枠の上限に達しました。しばらくしてから再試行するか、Google Cloudプロジェクトで課金を有効にすることを検討してください。');
+      }
+      throw new Error(`AI処理中にエラーが発生しました: ${errorMessage}`);
     }
   }
   return { data: results, usage: aggregatedUsage };

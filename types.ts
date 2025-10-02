@@ -1,4 +1,4 @@
-﻿export interface ProcessedTable {
+export interface ProcessedTable {
   type: 'table';
   title: {
     yearMonth: string;
@@ -59,3 +59,7 @@ export interface SuggestedOperation {
   params: any;
 }
 
+export type ChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
