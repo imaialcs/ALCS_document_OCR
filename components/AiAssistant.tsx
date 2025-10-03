@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useRef } from 'react';
-import { ArrowUpIcon, SparklesIcon } from './icons';
-import { SuggestedOperation, ChatMessage } from '../types';
+﻿import React, { useCallback, useEffect, useRef } from "react";
+import { ArrowUpIcon, UserCircleIcon } from "./icons";
+import botAvatar from "../assets/ai-assistant-avatar.png";
+import { SuggestedOperation, ChatMessage } from "../types";
 
 interface AiAssistantProps {
   suggestedOperations: SuggestedOperation[];
@@ -13,14 +14,12 @@ interface AiAssistantProps {
 }
 
 const TypingIndicator: React.FC = () => (
-  <div className="flex items-center space-x-1.5 py-2 px-3">
-    <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-    <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-    <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" />
+  <div className="flex items-center gap-1.5 py-1">
+    <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.28s]" />
+    <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.14s]" />
+    <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-emerald-400" />
   </div>
 );
-
-import { UserCircleIcon } from './icons';
 
 export const AiAssistant: React.FC<AiAssistantProps> = ({
   suggestedOperations,
@@ -35,121 +34,152 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isLoading]);
+  }, [messages, isLoading, scrollToBottom]);
 
   useEffect(() => {
     if (!textareaRef.current) {
       return;
     }
     const element = textareaRef.current;
-    element.style.height = 'auto';
+    element.style.height = "auto";
     element.style.height = `${element.scrollHeight}px`;
   }, [userInput]);
 
-  const handleSuggestionClick = (op: SuggestedOperation) => {
-    onExecuteOperation(op);
+  const handleSuggestionClick = (operation: SuggestedOperation) => {
+    onExecuteOperation(operation);
   };
 
   return (
-    <div className="ai-assistant bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-2xl shadow-lg flex flex-col h-full min-h-[400px]">
-      <h2 className="text-xl font-bold mb-2 p-4 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
-        <SparklesIcon className="w-6 h-6 text-blue-500" />
-        <span>AI アシスタント</span>
-      </h2>
+    <section className="relative flex min-h-[560px] flex-col overflow-hidden rounded-[28px] bg-[#f5f7fb] shadow-[0_20px_60px_-40px_rgba(15,23,42,0.35)]">
+      <div className="pointer-events-none absolute inset-0 opacity-70">
+        <div className="absolute -top-24 right-[-18%] h-60 w-60 rounded-full bg-gradient-to-br from-emerald-200 to-transparent blur-3xl" />
+        <div className="absolute bottom-[-30%] left-[-12%] h-60 w-60 rounded-full bg-gradient-to-br from-teal-100 to-transparent blur-3xl" />
+      </div>
 
-      <div className="flex-grow overflow-y-auto p-4 space-y-4 bg-slate-100 dark:bg-slate-800">
+      <header className="relative flex items-center justify-between border-b border-white/70 bg-gradient-to-r from-white via-white to-emerald-50 px-6 py-5">
+        <div className="flex items-center gap-3">
+          <div className="relative h-10 w-10">
+            <img src={botAvatar} alt="AIアシスタントのアイコン" className="h-full w-full rounded-full object-cover" />
+            <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-white" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">AIアシスタント</h2>
+            <p className="text-xs text-slate-500">オンライン | 通常3分以内に応答</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="rounded-full p-1 text-slate-400 transition hover:bg-slate-200/60 hover:text-slate-600"
+          aria-label="チャット設定"
+        >
+          <span className="sr-only">設定</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-6 w-6">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      </header>
+
+      <div className="relative flex-1 space-y-4 overflow-y-auto px-6 py-6">
         {messages.map((msg, index) => {
-          const isUser = msg.role === 'user';
-          return (
-            <div key={`${msg.role}-${index}`} className={`flex items-start gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
-              {/* AI Avatar */}
-              {!isUser && (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-500 text-white">
-                  <SparklesIcon className="h-5 w-5" />
-                </div>
-              )}
+          const isUser = msg.role === "user";
 
-              <div className={`flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
-                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {isUser ? 'あなた' : 'AIアシスタント'}
-                </span>
-                <div className={`relative max-w-lg rounded-xl px-4 py-2 text-gray-700 shadow-sm ${isUser ? 'bg-blue-500 text-white rounded-br-none' : 'bg-white dark:bg-gray-700 dark:text-gray-200 rounded-bl-none'}`}>
+          if (isUser) {
+            return (
+              <div key={`${msg.role}-${index}`} className="flex w-full justify-end gap-3">
+                <div className="max-w-xl text-right">
+                  <span className="text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-slate-400/90">あなた</span>
+                  <div className="mt-1 rounded-3xl bg-gradient-to-br from-teal-500 via-emerald-500 to-green-500 px-5 py-3 text-sm font-medium leading-relaxed text-white shadow-[0_18px_30px_-18px_rgba(20,184,166,0.55)]">
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                  </div>
+                </div>
+                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-slate-900/30">
+                  <UserCircleIcon className="h-5 w-5" />
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={`${msg.role}-${index}`} className="flex w-full items-start gap-3">
+              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-emerald-400 text-xs font-bold text-white">
+                AI
+              </div>
+              <div className="max-w-xl text-left">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-slate-400/90">AIアシスタント</span>
+                <div className="mt-1 rounded-3xl border border-slate-200 bg-white px-5 py-3 text-sm leading-relaxed text-slate-800 shadow-sm">
                   <p className="whitespace-pre-wrap">{msg.content}</p>
                 </div>
               </div>
-
-              {/* User Avatar */}
-              {isUser && (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-300 text-gray-600">
-                  <UserCircleIcon className="h-6 w-6" />
-                </div>
-              )}
             </div>
           );
         })}
-        {isLoading && messages.length > 0 && (
-          <div className="flex items-start gap-3 justify-start">
-             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-500 text-white">
-                <SparklesIcon className="h-5 w-5" />
-              </div>
-              <div className="flex flex-col gap-1 items-start">
-                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">AIアシスタント</span>
-                <div className="relative max-w-lg rounded-xl px-4 py-2 text-gray-700 bg-white dark:bg-gray-700 dark:text-gray-200 shadow-sm rounded-bl-none">
-                  <TypingIndicator />
-                </div>
-              </div>
+
+        {isLoading && (
+          <div className="flex items-start gap-3">
+            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-emerald-400 text-xs font-bold text-white">
+              AI
+            </div>
+            <div className="max-w-sm rounded-3xl border border-slate-200 bg-slate-100 px-5 py-3 text-sm text-slate-700 shadow-sm">
+              <TypingIndicator />
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Suggestions Area */}
       {!isLoading && suggestedOperations.length > 0 && (
-        <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-          <h3 className="text-sm font-semibold mb-2 text-gray-600 dark:text-gray-300">AIからの提案</h3>
-          <div className="flex flex-col gap-2">
-            {suggestedOperations.map((op, index) => (
+        <div className="border-t border-white/60 bg-white px-6 py-4">
+          <h3 className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">おすすめアクション</h3>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {suggestedOperations.map((operation, index) => (
               <button
-                key={`${op.operation}-${index}`}
-                onClick={() => handleSuggestionClick(op)}
-                className="w-full text-left px-4 py-3 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors shadow-sm"
+                key={`${operation.operation}-${index}`}
+                onClick={() => handleSuggestionClick(operation)}
+                className="inline-flex min-w-[12rem] items-center justify-center gap-2 rounded-full bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_24px_-18px_rgba(22,163,74,0.6)] transition hover:bg-green-700"
               >
-                {op.name}
+                <span className="truncate">{operation.name}</span>
               </button>
             ))}
           </div>
         </div>
       )}
 
-      <div className="input-area relative mt-auto p-4 border-t border-gray-200 dark:border-gray-700">
-        <textarea
-          ref={textareaRef}
-          className="w-full bg-slate-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl p-3 pr-14 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 max-h-40"
-          value={userInput}
-          onChange={(event) => onUserInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              onSendMessage();
-            }
-          }}
-          placeholder="AIに操作を依頼..."
-          rows={1}
-        />
-        <button
-          className="absolute right-6 top-1/2 -translate-y-1/2 p-2 rounded-full transition-colors disabled:opacity-50 enabled:hover:bg-blue-100 enabled:dark:hover:bg-gray-600"
-          onClick={onSendMessage}
-          disabled={isLoading || !userInput.trim()}
-          aria-label="メッセージを送信"
-        >
-          <ArrowUpIcon className="w-5 h-5 text-blue-600 dark:text-blue-500" />
-        </button>
-      </div>
-    </div>
+      <footer className="border-t border-white/70 bg-slate-50 px-6 py-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="flex-1 rounded-full border border-slate-300 bg-white px-4 py-3 shadow-inner focus-within:border-emerald-500 focus-within:shadow-[0_0_0_1px_rgba(16,185,129,0.35)]">
+            <textarea
+              ref={textareaRef}
+              className="min-h-[52px] w-full resize-none bg-transparent text-sm text-slate-700 placeholder-slate-400 focus:outline-none"
+              value={userInput}
+              onChange={(event) => onUserInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  onSendMessage();
+                }
+              }}
+              placeholder="AIにメッセージを入力..."
+              rows={1}
+            />
+            <p className="mt-1 text-xs text-slate-400">Enterで送信 / Shift+Enterで改行</p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-green-600 px-6 text-base font-semibold text-white shadow-[0_16px_32px_-18px_rgba(22,163,74,0.65)] transition hover:-translate-y-0.5 hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 sm:w-auto"
+            onClick={onSendMessage}
+            disabled={isLoading || !userInput.trim()}
+            aria-label="メッセージを送信"
+          >
+            <span>送信</span>
+            <ArrowUpIcon className="h-5 w-5" />
+          </button>
+        </div>
+      </footer>
+    </section>
   );
 };

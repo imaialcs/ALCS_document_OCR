@@ -1680,7 +1680,7 @@ ${dataString}
 
           {processedData.length > 0 && (
             <div className="mt-6">
-              <div className="p-6 bg-white rounded-lg shadow-md max-w-4xl mx-auto mb-6">
+              <div className="relative max-w-4xl mx-auto mb-12 px-4 sm:px-0">
                 <AiAssistant 
                   suggestedOperations={suggestedOperations}
                   isLoading={isSuggestionLoading || isAiManualLoading}

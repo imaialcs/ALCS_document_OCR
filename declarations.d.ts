@@ -3,3 +3,13 @@
 
 declare module 'xlsx';
 declare module 'pdfjs-dist';
+
+declare module '*.svg' {
+  const src: string;
+  export default src;
+}
+
+declare module '*.png' {
+  const src: string;
+  export default src;
+}
