@@ -1,16 +1,17 @@
 {
   "name": "alcs-document-ocr",
   "private": true,
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "会計事務所向けの文書OCRアプリケーションです。請求書、領収書、通帳などの画像をOCRで読み取り、データを処理し、Excelファイルとしてエクスポートします。",
   "author": "alcs",
   "repository": "github:imaialcs/ALCS_document_OCR",
   "main": "main.js",
   "scripts": {
-    "dev": "npm run build:preload && concurrently \"vite\" \"electron .\"",
+    "dev": "npm run build:preload && node scripts/start-dev.js",
     "build": "npm run build:renderer && npm run build:preload",
     "build:renderer": "vite build",
     "build:preload": "tsc -p tsconfig.preload.json",
+    "vite": "vite",
     "build:python": "pyinstaller excel_handler.py --onefile --distpath dist/excel_handler --name excel_handler",
     "dist": "npm run clean-dist && npm run build && npm run build:python && electron-builder",
     "start": "electron .",
@@ -22,6 +23,7 @@
     "@handsontable/react-wrapper": "^16.1.1",
     "allotment": "^1.20.4",
     "buffer": "^6.0.3",
+    "cross-env": "^10.1.0",
     "debug": "^4.4.1",
     "dotenv": "^17.2.2",
     "electron-log": "^5.1.5",
@@ -37,6 +39,7 @@
     "react-dom": "^18.3.1",
     "react-resizable-panels": "^3.0.6",
     "vite-plugin-node-polyfills": "^0.24.0",
+    "wait-on": "^9.0.1",
     "xlsx": "0.18.5"
   },
   "devDependencies": {
