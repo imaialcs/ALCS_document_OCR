@@ -1,6 +1,7 @@
 ﻿import React, { useCallback, useEffect, useRef } from "react";
-import { ArrowUpIcon, UserCircleIcon } from "./icons";
+import { PaperAirplaneIcon } from "./icons";
 import botAvatar from "../assets/ai-assistant-avatar.png";
+import userAvatar from "../User.png"; // User.pngをインポート
 import { SuggestedOperation, ChatMessage } from "../types";
 
 interface AiAssistantProps {
@@ -91,9 +92,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
                 <div className="max-w-md rounded-2xl rounded-br-none bg-sky-100 px-4 py-3 text-gray-800 shadow-md">
                   <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
                 </div>
-                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-700 text-white shadow-sm">
-                  <UserCircleIcon className="h-5 w-5" />
-                </div>
+                <img src={userAvatar} alt="ユーザーアイコン" className="h-8 w-8 rounded-full object-cover" />
               </div>
             );
           }
@@ -138,35 +137,33 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
         </div>
       )}
 
-      <footer className="flex-shrink-0 border-t border-gray-200 bg-white px-4 py-3">
-        <div className="relative flex items-center">
-          <div className="flex-1">
-            <textarea
-              ref={textareaRef}
-              className="w-full resize-none border-0 bg-transparent px-2 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-0"
-              value={userInput}
-              onChange={(event) => onUserInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  onSendMessage();
-                }
-              }}
-              placeholder="メッセージを入力..."
-              rows={1}
-            />
-          </div>
+      <footer className="flex-shrink-0 border-t border-gray-200 bg-white px-6 py-4">
+        <div className="flex w-full items-end gap-3">
+          <textarea
+            ref={textareaRef}
+            className="flex-1 w-full min-h-[48px] max-h-48 resize-none rounded-xl border border-emerald-100 bg-white/80 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            value={userInput}
+            onChange={(event) => onUserInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                onSendMessage();
+              }
+            }}
+            placeholder="メッセージを入力..."
+          />
           <button
             type="button"
-            className="ml-2 inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-sky-500 text-white shadow-md transition hover:bg-sky-600 disabled:cursor-not-allowed disabled:bg-gray-300"
+            className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md transition hover:bg-emerald-600 hover:shadow-lg disabled:cursor-not-allowed disabled:bg-gray-300"
             onClick={onSendMessage}
             disabled={isLoading || !userInput.trim()}
             aria-label="メッセージを送信"
           >
-            <ArrowUpIcon className="h-5 w-5" />
+            <PaperAirplaneIcon className="h-5 w-5 -rotate-45" />
           </button>
         </div>
       </footer>
     </section>
   );
 };
+

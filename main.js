@@ -42,8 +42,9 @@ function createWindow() {
     },
   });
 
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
   const startUrl = isDev
-    ? 'http://localhost:5173'
+    ? devServerUrl
     : `file://${path.join(__dirname, 'dist', 'index.html')}`;
   
   mainWindow.loadURL(startUrl);
