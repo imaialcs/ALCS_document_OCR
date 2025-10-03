@@ -12,11 +12,12 @@ import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import owlIcon from '/owl.png';
 
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { GrokAssistant } from './components/GrokAssistant';
+import { AiAssistant } from './components/AiAssistant';
 
 
 const getBasename = (filePath: string): string => {
   if (!filePath) return '';
+  // Windows (\\) と Unix (/) の両方のパス区切り文字に対応
   const lastSlash = filePath.lastIndexOf('/');
   const lastBackslash = filePath.lastIndexOf('\\');
   const lastSeparator = Math.max(lastSlash, lastBackslash);
@@ -295,12 +296,12 @@ const App = () => {
   const [outputMode, setOutputMode] = useState<'new' | 'template'>('new');
   const [templateSettings, setTemplateSettings] = useState({ dataStartCell: 'A1' });
 
-  // --- Grok関連のState ---
-  const [grokMessages, setGrokMessages] = useState<ChatMessage[]>([]);
-  const [grokUserInput, setGrokUserInput] = useState('');
+  // --- AI関連のState ---
+  const [aiMessages, setAiMessages] = useState<ChatMessage[]>([]);
+  const [aiUserInput, setAiUserInput] = useState('');
   const [suggestedOperations, setSuggestedOperations] = useState<SuggestedOperation[]>([]);
   const [isSuggestionLoading, setIsSuggestionLoading] = useState(false);
-  const [isGrokManualLoading, setIsGrokManualLoading] = useState(false);
+  const [isAiManualLoading, setIsAiManualLoading] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -549,7 +550,7 @@ const App = () => {
       setTemplateSettings(prev => ({ ...prev, [name]: value.trim() }));
   };
 
-  const fetchGrokSuggestions = async (data: ProcessedData[]) => {
+  const fetchAiSuggestions = async (data: ProcessedData[]) => {
     const activeSpreadsheet = data.find(d => d.type === 'table' || d.type === 'timecard');
     if (!activeSpreadsheet) {
       setSuggestedOperations([]);
@@ -559,33 +560,74 @@ const App = () => {
     setIsSuggestionLoading(true);
     setSuggestedOperations([]);
 
-    const prompt = `\nあなたは、日本の会計基準および関連法規に精通した、経験豊富な日本の公認会計士（Japanese CPA）です。あなたの任務は、OCRによって日本のドキュメントから抽出された未加工のスプレッドシートデータを分析し、日本の会計実務に沿った、付加価値の高い操作を提案することです。\n\n思考プロセスは、日本の会計専門家がたどるべき論理的なステップに基づいています。\n\n現在のスプレッドシートデータ（JSON形式）:\n${JSON.stringify(activeSpreadsheet, null, 2)}\n\n---\n指示:\n1.  **データの理解とコンテキスト特定:**\n    *   まず、このデータがどのような日本の商取引ドキュメント（請求書、領収書、納品書、銀行取引明細書など）から来たものかを特定します。\n    *   データの構造、ヘッダー、内容（特に日本の元号や和暦が使われている可能性）を分析し、その会計上の意味を理解してください。\n\n2.  **会計ワークフローの提案:**\n    *   特定したドキュメントの種類に基づいて、日本の会計実務に沿った標準的な処理ワークフローを頭の中で描いてください。（例：請求書であれば、内容の検証 → 勘定科目「買掛金」として計上 → 消費税の区分経理の確認 → 支払処理の準備）\n    *   このワークフローの中で、どのステップが現在のデータに適用可能かを判断します。\n\n3.  **具体的な操作の考案とJSON出力:**\n    *   判断した会計ステップを、下記の「利用可能な操作タイプ」を組み合わせた具体的な操作に変換します。最大3つまで提案してください。\n    *   **建設的な操作（仕訳、分類、計算など）を、破壊的な操作（削除など）よりも優先してください。** 削除は、明らかに無関係なデータ（例：誤ってOCRされたヘッダーやフッターのテキスト）に対してのみ提案してください。\n    *   提案は、\
-operations\
-というキーを持つJSONオブジェクトとして返してください。このキーの値は、提案する操作オブジェクトの配列です。\n    *   各操作オブジェクトには、\
-name\
-（ボタンに表示する日本語のラベル）、\
-operation\
-（下記リストからの操作名）、\
-params\
-（操作に必要なパラメータ）の3つのキーが必要です。\n    *   JSON以外のテキスト、説明、マークダウンは一切含めないでください。\n\nJSON出力形式の例:\n```json\n{\n  \"operations\": [\n    {\n      \"name\": \"「勘定科目」列を追加\",\n      \"operation\": \"add_column_with_data\",\n      \"params\": { \"header\": \"勘定科目\", \"data\": [\"消耗品費\", \"会議費\", \"消耗品費\"] }\n    },\n    {\n      \"name\": \"合計行を計算\",\n      \"operation\": \"calculate_totals\",\n      \"params\": { \"columns\": [\"金額\"] }\n    }\n  ]\n}\n```\n\n利用可能な操作タイプ (\"operation\"):\n- add_column_with_data: 新しい列を追加し、データを入力します。params: { \"header\": \"列名\", \"data\": [\"セル1\", \"セル2\", ...] }\n- create_journal_entry: 仕訳に必要な列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加します。この操作は通常、データ入力は伴いません。\n- calculate_totals: 指定された数値列の合計を計算し、新しい行として追加します。params: { \"columns\": [\"列名1\", \"列名2\"] }\n- delete_rows: 指定されたインデックスの行を削除します。params: { \"row_indices\": [0, 2, 3] }\n- delete_empty_rows: 空の行をすべて削除します。\n`;
+    const prompt = `
+あなたは、日本の会計基準および関連法規に精通した、経験豊富な日本の公認会計士（Japanese CPA）です。あなたの任務は、OCRによって日本のドキュメントから抽出された未加工のスプレッドシートデータを分析し、日本の会計実務に沿った、付加価値の高い操作を提案することです。
+
+思考プロセスは、日本の会計専門家がたどるべき論理的なステップに基づいています。
+
+現在のスプレッドシートデータ（JSON形式）:
+${JSON.stringify(activeSpreadsheet, null, 2)}
+
+---
+指示:
+1.  **データの理解とコンテキスト特定:**
+    *   まず、このデータがどのような日本の商取引ドキュメント（請求書、領収書、納品書、銀行取引明細書など）から来たものかを特定します。
+    *   データの構造、ヘッダー、内容（特に日本の元号や和暦が使われている可能性）を分析し、その会計上の意味を理解してください。
+
+2.  **会計ワークフローの提案:**
+    *   特定したドキュメントの種類に基づいて、日本の会計実務に沿った標準的な処理ワークフローを頭の中で描いてください。（例：請求書であれば、内容の検証 → 勘定科目「買掛金」として計上 → 消費税の区分経理の確認 → 支払処理の準備）
+    *   このワークフローの中で、どのステップが現在のデータに適用可能かを判断します。
+
+3.  **具体的な操作の考案とJSON出力:**
+    *   判断した会計ステップを、下記の「利用可能な操作タイプ」を組み合わせた具体的な操作に変換します。最大3つまで提案してください。
+    *   **建設的な操作（仕訳、分類、計算など）を、破壊的な操作（削除など）よりも優先してください。** 削除は、明らかに無関係なデータ（例：誤ってOCRされたヘッダーやフッターのテキスト）に対してのみ提案してください。
+    *   提案は、"operations"というキーを持つJSONオブジェクトとして返してください。このキーの値は、提案する操作オブジェクトの配列です。
+    *   各操作オブジェクトには、"name"（ボタンに表示する日本語のラベル）、"operation"（下記リストからの操作名）、"params"（操作に必要なパラメータ）の3つのキーが必要です。
+    *   JSON以外のテキスト、説明、マークダウンは一切含めないでください。
+
+JSON出力形式の例:
+\`\`\`json
+{
+  "operations": [
+    {
+      "name": "「勘定科目」列を追加",
+      "operation": "add_column_with_data",
+      "params": { "header": "勘定科目", "data": ["消耗品費", "会議費", "消耗品費"] }
+    },
+    {
+      "name": "合計行を計算",
+      "operation": "calculate_totals",
+      "params": { "columns": ["金額"] }
+    }
+  ]
+}
+\`\`\`
+
+利用可能な操作タイプ ("operation"):
+- add_column_with_data: 新しい列を追加し、データを入力します。params: { "header": "列名", "data": ["セル1", "セル2", ...] }
+- create_journal_entry: 仕訳に必要な列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加します。この操作は通常、データ入力は伴いません。
+- calculate_totals: 指定された数値列の合計を計算し、新しい行として追加します。params: { "columns": ["列名1", "列名2"] }
+- delete_rows: 指定されたインデックスの行を削除します。params: { "row_indices": [0, 2, 3] } または、すべての行を削除する場合は { "all": true }。
+- delete_empty_rows: 空の行をすべて削除します。
+`;
 
     try {
-      const result = await window.electronAPI.invokeGrokApi({ prompt });
+      const result = await window.electronAPI.invokeAiChat({ prompt });
       if (result.success && result.data.choices && result.data.choices[0]) {
         const responseText = result.data.choices[0].message.content;
         const parsed = extractJson(responseText);
         if (parsed && parsed.operations && Array.isArray(parsed.operations)) {
           setSuggestedOperations(parsed.operations);
         } else {
-          console.warn("Grok response was parsed, but did not contain a valid 'operations' array.", parsed);
+          console.warn("AI response was parsed, but did not contain a valid 'operations' array.", parsed);
           setSuggestedOperations([]);
         }
       } else {
-        console.warn("Grok API call was not successful or returned no choices.", result);
+        console.warn("AI API call was not successful or returned no choices.", result);
         setSuggestedOperations([]);
       }
     } catch (e) {
-      console.error("Failed to fetch or parse Grok suggestions:", e);
+      console.error("Failed to fetch or parse AI suggestions:", e);
       setSuggestedOperations([]);
     } finally {
       setIsSuggestionLoading(false);
@@ -793,7 +835,7 @@ params\
       if (!cancelProcessingRef.current) {
         setProcessedData(sanitizedAndValidatedData);
         if (sanitizedAndValidatedData.length > 0) {
-          fetchGrokSuggestions(sanitizedAndValidatedData);
+          fetchAiSuggestions(sanitizedAndValidatedData);
         }
       }
 
@@ -965,117 +1007,198 @@ params\
     });
   };
 
-  const handleGrokOperation = (operation: { operation: string; params: any }, targetIndices: number[] | 'all') => {
+  const handleAiOperation = (operation: { operation: string; params: any }, targetIndices: number[] | 'all') => {
     if (!operation || !operation.operation) return;
 
     const { operation: opName, params } = operation;
-    console.log(`Executing Grok operation: ${opName} on targets: ${targetIndices}`, JSON.stringify(params, null, 2));
+    console.log(`Executing AI operation: ${opName} on targets: ${targetIndices}`, JSON.stringify(params, null, 2));
 
     let newData = JSON.parse(JSON.stringify(processedData));
     let updateRequired = false;
 
     const indicesToProcess = targetIndices === 'all' 
       ? processedData.map((_, i) => i) 
-      : targetIndices;
+      : (Array.isArray(targetIndices) ? targetIndices : []);
 
-    indicesToProcess.forEach(cardIndex => {
+    (indicesToProcess || []).forEach(cardIndex => {
       const targetCard = newData[cardIndex];
-      if (!targetCard || targetCard.type !== 'table') {
-        return; // Skip non-table cards
-      }
+      if (!targetCard) return;
 
-      switch (opName) {
-        case 'add_column_with_data': {
-            if (params.header && params.data && Array.isArray(params.data)) {
-                const header = String(params.header);
-                if (!targetCard.headers.includes(header)) {
-                    targetCard.headers.push(header);
-                    targetCard.data.forEach((row: string[], rowIndex: number) => {
-                        row.push(String(params.data[rowIndex] ?? ''));
-                    });
-                    updateRequired = true;
-                } else {
-                    // If column exists, maybe update data? For now, we skip.
-                    console.warn(`Column "${header}" already exists. Skipping.`);
-                }
-            } else {
-                setError(`「${opName}」操作のパラメータが不完全です。'header'と'data'が必要です。`);
-            }
-            break;
-        }
-        case 'delete_rows': {
-            if (params.row_indices && Array.isArray(params.row_indices)) {
-                const sortedIndices = [...params.row_indices].sort((a, b) => b - a);
-                sortedIndices.forEach((rowIndex: number) => {
-                    if (rowIndex >= 0 && rowIndex < targetCard.data.length) {
-                        targetCard.data.splice(rowIndex, 1);
-                        updateRequired = true;
-                    }
-                });
-            }
-            break;
-        }
-        case 'delete_empty_rows': {
-            const originalRowCount = targetCard.data.length;
-            targetCard.data = targetCard.data.filter((row: string[]) => 
-                row.some(cell => cell && String(cell).trim() !== '')
-            );
-            if (targetCard.data.length !== originalRowCount) {
-                updateRequired = true;
-            }
-            break;
-        }
-        case 'calculate_totals': {
-            if (params.columns && Array.isArray(params.columns) && params.columns.length > 0) {
-                const newTotalRow = new Array(targetCard.headers.length).fill('');
-                let hasCalculated = false;
+      // タイムカードとテーブルの両方で機能する操作をここに記述
+      // 例: delete_card (仮)
 
-                params.columns.forEach((colName: string) => {
-                    const colIndex = targetCard.headers.indexOf(colName);
-                    if (colIndex !== -1) {
-                        const total = targetCard.data.reduce((sum: number, row: string[]) => {
-                            const val = parseFloat(String(row[colIndex]).replace(/[^0-9.-]+/g, '')) || 0;
-                            return sum + val;
-                        }, 0);
-                        
-                        newTotalRow[colIndex] = total.toLocaleString();
-                        if (!hasCalculated) {
-                            const labelCol = Math.max(0, colIndex - 1);
-                            newTotalRow[labelCol] = '合計';
-                            hasCalculated = true;
-                        }
-                    }
-                });
-                
-                if (hasCalculated) {
-                    targetCard.data.push(newTotalRow);
-                    updateRequired = true;
-                }
-            } else {
-                console.warn('calculate_totals was called without valid `columns` parameter.', params);
-                setError('合計を計算する列の指定がAIからありませんでした。');
-            }
+      // テーブル専用の操作
+      if (targetCard.type === 'table') {
+        switch (opName) {
+          case 'add_column_with_data': {
+    if (!params.header || !params.data || !Array.isArray(params.data)) {
+        setError(`「${opName}」操作のパラメータが不完全です。'header'と'data'が必要です。`);
+        break;
+    }
+
+    const header = String(params.header);
+    const colIndex = targetCard.headers.indexOf(header);
+    const formula = params.data[0] as string;
+
+    // Check for simple formula like =A2-B2 or =A2+B2
+    const formulaMatch = typeof formula === 'string' ? formula.match(/^=([A-Z]+)(\d+)([+\-])([A-Z]+)(\d+)$/) : null;
+
+    if (formulaMatch) {
+        const [, col1Letter, , operator, col2Letter] = formulaMatch;
+        const col1Index = columnToIndex(col1Letter);
+        const col2Index = columnToIndex(col2Letter);
+
+        if (col1Index === -1 || col2Index === -1) {
+            setError(`AIが提案した計算式に無効な列が含まれています: ${col1Letter}, ${col2Letter}`);
             break;
         }
-        case 'create_journal_entry': {
-            const newHeaders = ['借方勘定科目', '借方金額', '貸方勘定科目', '貸方金額', '摘要'];
-            newHeaders.forEach(h => {
-                if (!targetCard.headers.includes(h)) {
-                    targetCard.headers.push(h);
-                    updateRequired = true;
-                }
-            });
+
+        if (colIndex === -1) { // New column
+            targetCard.headers.push(header);
             targetCard.data.forEach((row: string[]) => {
-                while (row.length < targetCard.headers.length) {
-                    row.push('');
+                const val1 = parseFloat(String(row[col1Index] || '0').replace(/[^0-9.-]+/g, ''));
+                const val2 = parseFloat(String(row[col2Index] || '0').replace(/[^0-9.-]+/g, ''));
+                if (!isNaN(val1) && !isNaN(val2)) {
+                    const result = operator === '+' ? val1 + val2 : val1 - val2;
+                    row.push(String(result));
+                } else {
+                    row.push(''); // Push empty string if values are not numbers
                 }
             });
+        } else { // Existing column
+            targetCard.data.forEach((row: string[]) => {
+                const val1 = parseFloat(String(row[col1Index] || '0').replace(/[^0-9.-]+/g, ''));
+                const val2 = parseFloat(String(row[col2Index] || '0').replace(/[^0-9.-]+/g, ''));
+                if (!isNaN(val1) && !isNaN(val2)) {
+                    const result = operator === '+' ? val1 + val2 : val1 - val2;
+                    row[colIndex] = String(result);
+                } else {
+                    row[colIndex] = ''; // Set empty string if values are not numbers
+                }
+            });
+        }
+        updateRequired = true;
+
+    } else { // Default behavior if not a formula
+        if (colIndex === -1) { // New column
+            targetCard.headers.push(header);
+            targetCard.data.forEach((row: string[], rowIndex: number) => {
+                row.push(String(params.data[rowIndex] ?? params.data[0] ?? ''));
+            });
+        } else { // Existing column
+            targetCard.data.forEach((row: string[], rowIndex: number) => {
+                const valueToSet = params.data[rowIndex] ?? params.data[0];
+                if (valueToSet !== undefined) {
+                    row[colIndex] = String(valueToSet);
+                }
+            });
+        }
+        updateRequired = true;
+    }
+    break;
+}
+          case 'delete_rows': {
+              let indicesToDelete: number[] = [];
+              if (params.row_indices && Array.isArray(params.row_indices)) {
+                  indicesToDelete = params.row_indices;
+              } else if (typeof params.start_row === 'number' && typeof params.end_row === 'number') {
+                  // AIが start_row/end_row 形式で返してきた場合に対応
+                  const start = Math.max(0, params.start_row);
+                  const end = Math.min(targetCard.data.length - 1, params.end_row);
+                  for (let i = start; i <= end; i++) {
+                      indicesToDelete.push(i);
+                  }
+              } else if (params.all === true) {
+                  // 「すべて削除」のような指示に対応
+                  indicesToDelete = Array.from({ length: targetCard.data.length }, (_, i) => i);
+              }
+
+              if (indicesToDelete.length > 0) {
+                  // 降順にソートして、後ろから削除することでインデックスのズレを防ぐ
+                  const sortedIndices = [...new Set(indicesToDelete)].sort((a, b) => b - a);
+                  sortedIndices.forEach((rowIndex: number) => {
+                      if (rowIndex >= 0 && rowIndex < targetCard.data.length) {
+                          targetCard.data.splice(rowIndex, 1);
+                          updateRequired = true;
+                      }
+                  });
+              } else {
+                  console.warn('delete_rows operation was called without valid parameters.', params);
+                  setError('行の削除操作で、対象となる行が指定されませんでした。');
+              }
+              break;
+          }
+          case 'delete_empty_rows': {
+              const originalRowCount = targetCard.data.length;
+              targetCard.data = targetCard.data.filter((row: string[]) => 
+                  row.some(cell => cell && String(cell).trim() !== '')
+              );
+              if (targetCard.data.length !== originalRowCount) {
+                  updateRequired = true;
+              }
+              break;
+          }
+          case 'calculate_totals': {
+              if (params.columns && Array.isArray(params.columns) && params.columns.length > 0) {
+                  const newTotalRow = new Array(targetCard.headers.length).fill('');
+                  let hasCalculated = false;
+
+                  params.columns.forEach((colName: string) => {
+                      const colIndex = targetCard.headers.indexOf(colName);
+                      if (colIndex !== -1) {
+                          const total = targetCard.data.reduce((sum: number, row: string[]) => {
+                              const val = parseFloat(String(row[colIndex]).replace(/[^0-9.-]+/g, '')) || 0;
+                              return sum + val;
+                          }, 0);
+                          
+                          newTotalRow[colIndex] = total.toLocaleString();
+                          if (!hasCalculated) {
+                              const labelCol = Math.max(0, colIndex - 1);
+                              newTotalRow[labelCol] = '合計';
+                              hasCalculated = true;
+                          }
+                      }
+                  });
+                  
+                  if (hasCalculated) {
+                      targetCard.data.push(newTotalRow);
+                      updateRequired = true;
+                  }
+              } else {
+                  console.warn('calculate_totals was called without valid `columns` parameter.', params);
+                  setError('合計を計算する列の指定がAIからありませんでした。');
+              }
+              break;
+          }
+          case 'create_journal_entry': {
+              const newHeaders = ['借方勘定科目', '借方金額', '貸方勘定科目', '貸方金額', '摘要'];
+              newHeaders.forEach(h => {
+                  if (!targetCard.headers.includes(h)) {
+                      targetCard.headers.push(h);
+                      updateRequired = true;
+                  }
+              });
+              targetCard.data.forEach((row: string[]) => {
+                  while (row.length < targetCard.headers.length) {
+                      row.push('');
+                  }
+              });
+              break;
+          }
+          default:
+              setError(`テーブル操作「${opName}」はまだ実装されていません。`);
+              console.warn(`Unknown AI table operation: ${opName}`);
+              break;
+        }
+      } else if (targetCard.type === 'timecard') {
+        // タイムカード専用の操作をここに記述
+        switch (opName) {
+          // ... TBD
+          default:
+            setError(`タイムカード操作「${opName}」はまだ実装されていません。`);
+            console.warn(`Unknown AI timecard operation: ${opName}`);
             break;
         }
-        default:
-            setError(`操作「${opName}」はまだ実装されていません。`);
-            console.warn(`Unknown Grok operation: ${opName}`);
-            break;
       }
     });
 
@@ -1084,57 +1207,67 @@ params\
     }
   };
 
-  const handleGrokSendMessage = async () => {
-    const trimmedInput = grokUserInput.trim();
-    if (!trimmedInput || !window.electronAPI?.invokeGrokApi) return;
+  const handleAiSendMessage = async () => {
+    const trimmedInput = aiUserInput.trim();
+    if (!trimmedInput || !window.electronAPI?.invokeAiChat) return;
 
-    setGrokMessages(prev => [...prev, { role: 'user', content: trimmedInput }]);
-    setGrokUserInput('');
-    setIsGrokManualLoading(true);
-
-    // Simple target parsing
-    const match = trimmedInput.match(/(1|１|一|最初)つ?目/); // "1st", "first"
-    let targetIndex: number | null = null;
-    let targetData: ProcessedData | null = null;
-
-    if (match) {
-      targetIndex = 0; // Simple case for now
-    }
+    const newMessages: ChatMessage[] = [...aiMessages, { role: 'user', content: trimmedInput }];
+    setAiMessages(newMessages);
+    setAiUserInput('');
+    setIsAiManualLoading(true);
 
     const spreadsheets = processedData.filter(d => d.type === 'table' || d.type === 'timecard');
-    if (spreadsheets.length === 0) {
-      setGrokMessages(prev => [...prev, { role: 'assistant', content: '操作対象のスプレッドシートがありません。'}]);
-      setIsGrokManualLoading(false);
-      return;
-    }
+    const targetData = spreadsheets.length > 0 ? spreadsheets[0] : null;
 
-    if (targetIndex !== null && spreadsheets[targetIndex]) {
-      targetData = spreadsheets[targetIndex];
-    } else {
-      // Default to first spreadsheet if no specific target is found for now
-      targetData = spreadsheets[0];
-    }
+    const buildPrompt = (input: string, history: ChatMessage[], data: ProcessedData | null) => {
+        const historyString = history.map(m => `${m.role}: ${m.content}`).join('\n');
+        const dataString = data ? `\n\n現在のスプレッドシートデータ (JSON):\n${JSON.stringify(data, null, 2)}` : '';
 
-    const buildManualPrompt = (input: string, data: ProcessedData) => `
-ユーザーの要求: "${input}"
+        return `
+あなたは、ユーザーの指示を分析し、2つのモードのうちの1つで応答する高度なAIアシスタントです。
 
-現在のスプレッドシートデータ (JSON):
-${JSON.stringify(data, null, 2)}
+--- 会話履歴 ---
+${historyString}
+${dataString}
 
----
-上記の要求とデータに基づき、操作のためのJSONオブジェクトを一つだけ返してください。
-JSONには "operation" と "params" キーを含める必要があります。
-要求が会話形式の場合は、JSON内でチャットメッセージとして応答してください: {"operation": "chat", "response": "ここに返答メッセージを記述"}。
-JSON以外のテキストやマークダウンは含めないでください。
+--- ルール ---
+1.  ユーザーの最新のメッセージ（"user: ${input}"）を分析してください。
+2.  メッセージがスプレッドシートの操作（計算、列の追加、データの検索など）を指示している場合、**操作モード**で応答します。
+3.  メッセージが一般的な質問、挨拶、または会話である場合、**チャットモード**で応答します。
+4.  応答は必ず指定されたJSON形式のみで、他のテキストは一切含めないでください。
+
+--- 応答形式 ---
+
+*   **チャットモードの場合:**
+    ユーザーへの返答メッセージを含むJSONを返します。
+    \`\`\`json
+    {"operation": "chat", "params": {"response": "ここに会話の応答メッセージを記述"}}
+    \`\`\`
+
+*   **操作モードの場合:**
+    実行すべき操作を定義したJSONを返します。利用可能な操作は以下の通りです。
+    - add_column_with_data: 新しい列を追加し、データを入力します。params: { "header": "列名", "data": ["セル1", "セル2", ...] }
+    - delete_rows: 行を削除します。params: { "row_indices": [0, 2, 3] }
+    - calculate_totals: 列の合計を計算します。params: { "columns": ["列名1"] }
+    - delete_empty_rows: 空の行を削除します。
+    - create_journal_entry: 仕訳用の列を追加します。
+
+    操作モードのJSON出力例:
+    \`\`\`json
+    {"operation": "add_column_with_data", "params": {"header": "新しい列", "data": ["=A2+B2"]}}
+    \`\`\`
+
+--- あなたの応答 ---
 `;
+    };
 
     try {
-      const prompt = buildManualPrompt(trimmedInput, targetData);
-      const result = await window.electronAPI.invokeGrokApi({ prompt });
+      const prompt = buildPrompt(trimmedInput, newMessages, targetData);
+      const result = await window.electronAPI.invokeAiChat({ prompt });
 
       if (!result.success) {
         const errorMessage = result.error ?? 'AIアシスタントからの応答がありませんでした。';
-        setGrokMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${errorMessage}` }]);
+        setAiMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${errorMessage}` }]);
         return;
       }
 
@@ -1145,27 +1278,24 @@ JSON以外のテキストやマークダウンは含めないでください。
         const operationData = parsed as SuggestedOperation;
 
         if (operationData.operation === 'chat') {
-          setGrokMessages(prev => [...prev, { role: 'assistant', content: (operationData.params as any)?.response ?? '空のチャット応答を受信しました。' }]);
-          return;
+          const chatResponse = (operationData.params as any)?.response ?? 'チャット応答が空です。';
+          setAiMessages(prev => [...prev, { role: 'assistant', content: chatResponse }]);
+        } else {
+          // デフォルトのターゲットは最初のスプレッドシート
+          const targetSpreadsheetIndex = processedData.findIndex(d => d.type === 'table' || d.type === 'timecard');
+          const target = targetSpreadsheetIndex !== -1 ? [targetSpreadsheetIndex] : [0];
+          handleAiOperation(operationData, target);
+          setAiMessages(prev => [...prev, { role: 'assistant', content: `操作「${operationData.name || operationData.operation}」を実行しました。` }]);
         }
-
-        if (operationData.operation && operationData.operation !== 'chat') {
-          // If a target was specified, apply to that index. Otherwise, apply to all.
-          const originalIndexOfTarget = processedData.indexOf(targetData);
-          const target = targetIndex !== null ? [originalIndexOfTarget] : 'all';
-          handleGrokOperation(operationData, target);
-          setGrokMessages(prev => [...prev, { role: 'assistant', content: '要求された操作を実行しました。' }]);
-          return;
-        }
+      } else {
+        const fallback = content || 'AIは応答しましたが、有効な操作または会話を特定できませんでした。';
+        setAiMessages(prev => [...prev, { role: 'assistant', content: fallback }]);
       }
-
-      const fallback = content || 'AIは応答しましたが、有効な操作を特定できませんでした。';
-      setGrokMessages(prev => [...prev, { role: 'assistant', content: fallback }]);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      setGrokMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${errorMessage}` }]);
+      setAiMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${errorMessage}` }]);
     } finally {
-      setIsGrokManualLoading(false);
+      setIsAiManualLoading(false);
     }
   };
 
@@ -1550,15 +1680,15 @@ JSON以外のテキストやマークダウンは含めないでください。
 
           {processedData.length > 0 && (
             <div className="mt-6">
-              <div className="p-6 bg-white rounded-lg shadow-md max-w-full mb-6">
-                <GrokAssistant 
+              <div className="p-6 bg-white rounded-lg shadow-md max-w-4xl mx-auto mb-6">
+                <AiAssistant 
                   suggestedOperations={suggestedOperations}
-                  isLoading={isSuggestionLoading || isGrokManualLoading}
-                  messages={grokMessages}
-                  userInput={grokUserInput}
-                  onUserInput={setGrokUserInput}
-                  onSendMessage={handleGrokSendMessage}
-                  onExecuteOperation={(operation) => handleGrokOperation(operation, 'all')}
+                  isLoading={isSuggestionLoading || isAiManualLoading}
+                  messages={aiMessages}
+                  userInput={aiUserInput}
+                  onUserInput={setAiUserInput}
+                  onSendMessage={handleAiSendMessage}
+                  onExecuteOperation={(operation) => handleAiOperation(operation, 'all')}
                 />
               </div>
 

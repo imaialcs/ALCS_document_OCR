@@ -6,6 +6,7 @@ const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
 const Jimp = require('jimp'); // Add Jimp import
 const { Buffer } = require('buffer'); // Add Buffer import
+const fetch = require('node-fetch');
 
 // Initialize electron-log to capture renderer console
 log.initialize({ spyRendererConsole: true });
@@ -354,66 +355,58 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
   return { data: results, usage: aggregatedUsage };
 });
 
-ipcMain.handle('invoke-grok', async (_event, payload) => {
-  const apiKey = process.env.API_KEY;
+ipcMain.handle('invoke-ai-chat', async (_event, payload) => {
+  const apiKey = process.env.VITE_OPENROUTER_API_KEY;
   if (!apiKey) {
-    const message = 'Grok APIキーが設定されていません。';
+    const message = 'OpenRouter APIキーが.envファイルに設定されていません。(VITE_OPENROUTER_API_KEY)';
     log.error(message);
     return { success: false, error: message };
   }
 
   const prompt = typeof payload === 'string' ? payload : payload?.prompt;
   if (!prompt || typeof prompt !== 'string') {
-    const message = 'Grok APIに送信するpromptが指定されていません。';
+    const message = 'AIチャットAPIに送信するpromptが指定されていません。';
     log.error(message);
     return { success: false, error: message };
   }
 
   try {
-    const genAI = new GoogleGenAI({ apiKey });
-    const result = await genAI.models.generateContent({
-      model: 'gemini-flash-lite-latest',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.2,
-        topK: 32,
-        topP: 1,
-        maxOutputTokens: 2048,
-        responseMimeType: 'application/json',
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:5173", // Optional
+        "X-Title": "ALCS Document OCR", // Optional
       },
+      body: JSON.stringify({
+        "model": "x-ai/grok-4-fast:free",
+        "messages": [
+          { "role": "user", "content": prompt },
+        ],
+      }),
     });
 
-    const parts = (result?.candidates?.[0]?.content?.parts) || [];
-    const responseText = parts
-      .map((part) => part.text)
-      .filter(Boolean)
-      .join('\n')
-      .trim();
-
-    if (!responseText) {
-      const message = 'Grok APIからの応答が空でした。';
+    if (!response.ok) {
+      const errorBody = await response.text();
+      const message = `OpenRouter APIからのエラー応答: ${response.status} ${response.statusText}\n${errorBody}`;
       log.error(message);
       return { success: false, error: message };
     }
 
+    const responseData = await response.json();
+
     return {
       success: true,
-      data: {
-        choices: [
-          {
-            message: {
-              content: responseText,
-            },
-          },
-        ],
-      },
+      data: responseData,
     };
+
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log.error('Grok API呼び出しに失敗しました:', error);
+    log.error('OpenRouter API呼び出しに失敗しました:', error);
     return {
       success: false,
-      error: 'Grok API呼び出しに失敗しました: ' + errorMessage,
+      error: 'OpenRouter API呼び出しに失敗しました: ' + errorMessage,
     };
   }
 });

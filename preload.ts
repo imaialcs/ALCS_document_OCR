@@ -2,8 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 try {
   contextBridge.exposeInMainWorld('electronAPI', {
-    invokeGrok: (payload: { prompt: string }) => ipcRenderer.invoke('invoke-grok', payload),
-    invokeGrokApi: (payload: { prompt: string }) => ipcRenderer.invoke('invoke-grok', payload),
+    invokeAiChat: (payload: { prompt: string }) => ipcRenderer.invoke('invoke-ai-chat', payload),
 
     // --- Secure Gemini OCR Invocation ---
     invokeGeminiOcr: (pages: { base64: string; mimeType: string; name: string }[]) => ipcRenderer.invoke('invoke-gemini-ocr', pages),

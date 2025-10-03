@@ -7,7 +7,7 @@ declare global {
     electronAPI: {
       invokeGeminiOcr: (pages: { base64: string; mimeType: string; name: string }[], documentType: string) => Promise<{ data: ProcessedData[], usage: { promptTokens: number, outputTokens: number } }>;
       invokeGrok: (payload: { prompt: string }) => Promise<{ success: boolean; data?: { choices: { message: { content: string } }[] }; error?: string }>;
-      invokeGrokApi: (payload: { prompt: string }) => Promise<{ success: boolean; data?: { choices: { message: { content: string } }[] }; error?: string }>;
+      invokeAiChat: (payload: { prompt: string }) => Promise<{ success: boolean; data?: { choices: { message: { content: string } }[] }; error?: string }>;
 
       processImageForOcr: (arrayBuffer: ArrayBuffer, options: { isAutocropEnabled: boolean, isContrastAdjustmentEnabled: boolean }) => Promise<{ base64: string; mimeType: string }>;
       saveFile: (options: any, data: Uint8Array) => Promise<{ success: boolean; path?: string; error?: string; canceled?: boolean; }>;

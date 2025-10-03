@@ -1,7 +1,7 @@
 {
   "name": "alcs-document-ocr",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "会計事務所向けの文書OCRアプリケーションです。請求書、領収書、通帳などの画像をOCRで読み取り、データを処理し、Excelファイルとしてエクスポートします。",
   "author": "alcs",
   "repository": "github:imaialcs/ALCS_document_OCR",
@@ -30,6 +30,7 @@
     "graceful-fs": "^4.2.11",
     "handsontable": "^16.1.0",
     "jimp": "^0.22.0",
+    "node-fetch": "^2.7.0",
     "pdfjs-dist": "^4.4.168",
     "re-resizable": "^6.11.2",
     "react": "^18.3.1",
