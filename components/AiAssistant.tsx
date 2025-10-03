@@ -33,13 +33,14 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
+  // Auto-scrolling disabled based on user feedback
+  // const scrollToBottom = useCallback(() => {
+  //   messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  // }, []);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, isLoading, scrollToBottom]);
+  // useEffect(() => {
+  //   scrollToBottom();
+  // }, [messages, isLoading, scrollToBottom]);
 
   useEffect(() => {
     if (!textareaRef.current) {
@@ -55,13 +56,14 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   };
 
   return (
-    <section className="relative flex min-h-[560px] flex-col overflow-hidden rounded-[28px] bg-[#f5f7fb] shadow-[0_20px_60px_-40px_rgba(15,23,42,0.35)]">
-      <div className="pointer-events-none absolute inset-0 opacity-70">
-        <div className="absolute -top-24 right-[-18%] h-60 w-60 rounded-full bg-gradient-to-br from-emerald-200 to-transparent blur-3xl" />
-        <div className="absolute bottom-[-30%] left-[-12%] h-60 w-60 rounded-full bg-gradient-to-br from-teal-100 to-transparent blur-3xl" />
+    <section className="relative flex h-[700px] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-lg">
+      {/* Decorative background gradients */}
+      <div className="pointer-events-none absolute inset-0 opacity-50">
+        <div className="absolute -top-24 right-[-18%] h-60 w-60 rounded-full bg-gradient-to-br from-sky-100 to-transparent blur-3xl" />
+        <div className="absolute bottom-[-30%] left-[-12%] h-60 w-60 rounded-full bg-gradient-to-br from-indigo-100 to-transparent blur-3xl" />
       </div>
 
-      <header className="relative flex items-center justify-between border-b border-white/70 bg-gradient-to-r from-white via-white to-emerald-50 px-6 py-5">
+      <header className="relative flex flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="relative h-10 w-10">
             <img src={botAvatar} alt="AIアシスタントのアイコン" className="h-full w-full rounded-full object-cover" />
@@ -72,32 +74,24 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
             <p className="text-xs text-slate-500">オンライン | 通常3分以内に応答</p>
           </div>
         </div>
-        <button
-          type="button"
-          className="rounded-full p-1 text-slate-400 transition hover:bg-slate-200/60 hover:text-slate-600"
-          aria-label="チャット設定"
-        >
-          <span className="sr-only">設定</span>
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-6 w-6">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        </button>
       </header>
 
-      <div className="relative flex-1 space-y-4 overflow-y-auto px-6 py-6">
+      <div className="relative flex-1 space-y-6 overflow-y-auto p-6">
         {messages.map((msg, index) => {
           const isUser = msg.role === "user";
+          const messageTime = new Date().toLocaleTimeString("ja-JP", {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
 
           if (isUser) {
             return (
-              <div key={`${msg.role}-${index}`} className="flex w-full justify-end gap-3">
-                <div className="max-w-xl text-right">
-                  <span className="text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-slate-400/90">あなた</span>
-                  <div className="mt-1 rounded-3xl bg-gradient-to-br from-teal-500 via-emerald-500 to-green-500 px-5 py-3 text-sm font-medium leading-relaxed text-white shadow-[0_18px_30px_-18px_rgba(20,184,166,0.55)]">
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
-                  </div>
+              <div key={`${msg.role}-${index}`} className="flex items-end justify-end gap-2">
+                <span className="text-xs text-gray-400">{messageTime}</span>
+                <div className="max-w-md rounded-2xl rounded-br-none bg-sky-100 px-4 py-3 text-gray-800 shadow-md">
+                  <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
                 </div>
-                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-slate-900/30">
+                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-700 text-white shadow-sm">
                   <UserCircleIcon className="h-5 w-5" />
                 </div>
               </div>
@@ -105,15 +99,13 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
           }
 
           return (
-            <div key={`${msg.role}-${index}`} className="flex w-full items-start gap-3">
-              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-emerald-400 text-xs font-bold text-white">
-                AI
-              </div>
-              <div className="max-w-xl text-left">
-                <span className="text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-slate-400/90">AIアシスタント</span>
-                <div className="mt-1 rounded-3xl border border-slate-200 bg-white px-5 py-3 text-sm leading-relaxed text-slate-800 shadow-sm">
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+            <div key={`${msg.role}-${index}`} className="flex items-start gap-3">
+              <img src={botAvatar} alt="AIアシスタントのアイコン" className="h-8 w-8 rounded-full object-cover" />
+              <div className="flex items-end gap-2">
+                <div className="max-w-md rounded-2xl rounded-bl-none bg-white px-4 py-3 text-gray-800 shadow-md">
+                  <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
                 </div>
+                <span className="text-xs text-gray-400">{messageTime}</span>
               </div>
             </div>
           );
@@ -121,10 +113,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
 
         {isLoading && (
           <div className="flex items-start gap-3">
-            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-emerald-400 text-xs font-bold text-white">
-              AI
-            </div>
-            <div className="max-w-sm rounded-3xl border border-slate-200 bg-slate-100 px-5 py-3 text-sm text-slate-700 shadow-sm">
+            <img src={botAvatar} alt="AIアシスタントのアイコン" className="h-8 w-8 rounded-full object-cover" />
+            <div className="max-w-sm rounded-2xl rounded-bl-none bg-white px-5 py-3 shadow-md">
               <TypingIndicator />
             </div>
           </div>
@@ -133,14 +123,13 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
       </div>
 
       {!isLoading && suggestedOperations.length > 0 && (
-        <div className="border-t border-white/60 bg-white px-6 py-4">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">おすすめアクション</h3>
-          <div className="mt-3 flex flex-wrap gap-2">
+        <div className="border-t border-gray-200 bg-white/50 px-6 py-4 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center gap-2">
             {suggestedOperations.map((operation, index) => (
               <button
                 key={`${operation.operation}-${index}`}
                 onClick={() => handleSuggestionClick(operation)}
-                className="inline-flex min-w-[12rem] items-center justify-center gap-2 rounded-full bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_24px_-18px_rgba(22,163,74,0.6)] transition hover:bg-green-700"
+                className="rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-sky-600 shadow-sm transition hover:bg-gray-50"
               >
                 <span className="truncate">{operation.name}</span>
               </button>
@@ -149,12 +138,12 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
         </div>
       )}
 
-      <footer className="border-t border-white/70 bg-slate-50 px-6 py-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="flex-1 rounded-full border border-slate-300 bg-white px-4 py-3 shadow-inner focus-within:border-emerald-500 focus-within:shadow-[0_0_0_1px_rgba(16,185,129,0.35)]">
+      <footer className="flex-shrink-0 border-t border-gray-200 bg-white px-4 py-3">
+        <div className="relative flex items-center">
+          <div className="flex-1">
             <textarea
               ref={textareaRef}
-              className="min-h-[52px] w-full resize-none bg-transparent text-sm text-slate-700 placeholder-slate-400 focus:outline-none"
+              className="w-full resize-none border-0 bg-transparent px-2 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-0"
               value={userInput}
               onChange={(event) => onUserInput(event.target.value)}
               onKeyDown={(event) => {
@@ -163,19 +152,17 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
                   onSendMessage();
                 }
               }}
-              placeholder="AIにメッセージを入力..."
+              placeholder="メッセージを入力..."
               rows={1}
             />
-            <p className="mt-1 text-xs text-slate-400">Enterで送信 / Shift+Enterで改行</p>
           </div>
           <button
             type="button"
-            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-green-600 px-6 text-base font-semibold text-white shadow-[0_16px_32px_-18px_rgba(22,163,74,0.65)] transition hover:-translate-y-0.5 hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 sm:w-auto"
+            className="ml-2 inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-sky-500 text-white shadow-md transition hover:bg-sky-600 disabled:cursor-not-allowed disabled:bg-gray-300"
             onClick={onSendMessage}
             disabled={isLoading || !userInput.trim()}
             aria-label="メッセージを送信"
           >
-            <span>送信</span>
             <ArrowUpIcon className="h-5 w-5" />
           </button>
         </div>
