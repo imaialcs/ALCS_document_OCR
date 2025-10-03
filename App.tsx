@@ -559,7 +559,15 @@ const App = () => {
     setIsSuggestionLoading(true);
     setSuggestedOperations([]);
 
-    const prompt = `\nあなたは、日本の会計基準および関連法規に精通した、経験豊富な日本の公認会計士（Japanese CPA）です。あなたの任務は、OCRによって日本のドキュメントから抽出された未加工のスプレッドシートデータを分析し、日本の会計実務に沿った、付加価値の高い操作を提案することです。\n\n思考プロセスは、日本の会計専門家がたどるべき論理的なステップに基づいています。\n\n現在のスプレッドシートデータ（JSON形式）:\n${JSON.stringify(activeSpreadsheet, null, 2)}\n\n---\n指示:\n1.  **データの理解とコンテキスト特定:**\n    *   まず、このデータがどのような日本の商取引ドキュメント（請求書、領収書、納品書、銀行取引明細書など）から来たものかを特定します。\n    *   データの構造、ヘッダー、内容（特に日本の元号や和暦が使われている可能性）を分析し、その会計上の意味を理解してください。\n\n2.  **会計ワークフローの提案:**\n    *   特定したドキュメントの種類に基づいて、日本の会計実務に沿った標準的な処理ワークフローを頭の中で描いてください。（例：請求書であれば、内容の検証 → 勘定科目「買掛金」として計上 → 消費税の区分経理の確認 → 支払処理の準備）\n    *   このワークフローの中で、どのステップが現在のデータに適用可能かを判断します。\n\n3.  **具体的な操作の考案とJSON出力:**\n    *   判断した会計ステップを、下記の「利用可能な操作タイプ」を組み合わせた具体的な操作に変換します。最大3つまで提案してください。\n    *   **建設的な操作（仕訳、分類、計算など）を、破壊的な操作（削除など）よりも優先してください。** 削除は、明らかに無関係なデータ（例：誤ってOCRされたヘッダーやフッターのテキスト）に対してのみ提案してください。\n    *   提案は、\`operations\`というキーを持つJSONオブジェクトとして返してください。このキーの値は、提案する操作オブジェクトの配列です。\n    *   各操作オブジェクトには、\`name\`（ボタンに表示する日本語のラベル）、\`operation\`（下記リストからの操作名）、\`params\`（操作に必要なパラメータ）の3つのキーが必要です。\n    *   JSON以外のテキスト、説明、マークダウンは一切含めないでください。\n\nJSON出力形式の例:\n\`\`\`json\n{\n  \"operations\": [\n    {\n      \"name\": \"「勘定科目」列を追加\",\n      \"operation\": \"add_column_with_data\",\n      \"params\": { \"header\": \"勘定科目\", \"data\": [\"消耗品費\", \"会議費\", \"消耗品費\"] }\n    },\n    {\n      \"name\": \"合計行を計算\",\n      \"operation\": \"calculate_totals\",\n      \"params\": { \"columns\": [\"金額\"] }\n    }\n  ]\n}\n\`\`\`\n\n利用可能な操作タイプ (\"operation\"):\n- add_column_with_data: 新しい列を追加し、データを入力します。params: { \"header\": \"列名\", \"data\": [\"セル1\", \"セル2\", ...] }\n- create_journal_entry: 仕訳に必要な列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加します。この操作は通常、データ入力は伴いません。\n- calculate_totals: 指定された数値列の合計を計算し、新しい行として追加します。params: { \"columns\": [\"列名1\", \"列名2\"] }\n- delete_rows: 指定されたインデックスの行を削除します。params: { \"row_indices\": [0, 2, 3] }\n- delete_empty_rows: 空の行をすべて削除します。\n`;
+    const prompt = `\nあなたは、日本の会計基準および関連法規に精通した、経験豊富な日本の公認会計士（Japanese CPA）です。あなたの任務は、OCRによって日本のドキュメントから抽出された未加工のスプレッドシートデータを分析し、日本の会計実務に沿った、付加価値の高い操作を提案することです。\n\n思考プロセスは、日本の会計専門家がたどるべき論理的なステップに基づいています。\n\n現在のスプレッドシートデータ（JSON形式）:\n${JSON.stringify(activeSpreadsheet, null, 2)}\n\n---\n指示:\n1.  **データの理解とコンテキスト特定:**\n    *   まず、このデータがどのような日本の商取引ドキュメント（請求書、領収書、納品書、銀行取引明細書など）から来たものかを特定します。\n    *   データの構造、ヘッダー、内容（特に日本の元号や和暦が使われている可能性）を分析し、その会計上の意味を理解してください。\n\n2.  **会計ワークフローの提案:**\n    *   特定したドキュメントの種類に基づいて、日本の会計実務に沿った標準的な処理ワークフローを頭の中で描いてください。（例：請求書であれば、内容の検証 → 勘定科目「買掛金」として計上 → 消費税の区分経理の確認 → 支払処理の準備）\n    *   このワークフローの中で、どのステップが現在のデータに適用可能かを判断します。\n\n3.  **具体的な操作の考案とJSON出力:**\n    *   判断した会計ステップを、下記の「利用可能な操作タイプ」を組み合わせた具体的な操作に変換します。最大3つまで提案してください。\n    *   **建設的な操作（仕訳、分類、計算など）を、破壊的な操作（削除など）よりも優先してください。** 削除は、明らかに無関係なデータ（例：誤ってOCRされたヘッダーやフッターのテキスト）に対してのみ提案してください。\n    *   提案は、\
+operations\
+というキーを持つJSONオブジェクトとして返してください。このキーの値は、提案する操作オブジェクトの配列です。\n    *   各操作オブジェクトには、\
+name\
+（ボタンに表示する日本語のラベル）、\
+operation\
+（下記リストからの操作名）、\
+params\
+（操作に必要なパラメータ）の3つのキーが必要です。\n    *   JSON以外のテキスト、説明、マークダウンは一切含めないでください。\n\nJSON出力形式の例:\n```json\n{\n  \"operations\": [\n    {\n      \"name\": \"「勘定科目」列を追加\",\n      \"operation\": \"add_column_with_data\",\n      \"params\": { \"header\": \"勘定科目\", \"data\": [\"消耗品費\", \"会議費\", \"消耗品費\"] }\n    },\n    {\n      \"name\": \"合計行を計算\",\n      \"operation\": \"calculate_totals\",\n      \"params\": { \"columns\": [\"金額\"] }\n    }\n  ]\n}\n```\n\n利用可能な操作タイプ (\"operation\"):\n- add_column_with_data: 新しい列を追加し、データを入力します。params: { \"header\": \"列名\", \"data\": [\"セル1\", \"セル2\", ...] }\n- create_journal_entry: 仕訳に必要な列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加します。この操作は通常、データ入力は伴いません。\n- calculate_totals: 指定された数値列の合計を計算し、新しい行として追加します。params: { \"columns\": [\"列名1\", \"列名2\"] }\n- delete_rows: 指定されたインデックスの行を削除します。params: { \"row_indices\": [0, 2, 3] }\n- delete_empty_rows: 空の行をすべて削除します。\n`;
 
     try {
       const result = await window.electronAPI.invokeGrokApi({ prompt });
@@ -1550,7 +1558,7 @@ JSON以外のテキストやマークダウンは含めないでください。
                   userInput={grokUserInput}
                   onUserInput={setGrokUserInput}
                   onSendMessage={handleGrokSendMessage}
-                  onExecuteOperation={handleGrokOperation} 
+                  onExecuteOperation={(operation) => handleGrokOperation(operation, 'all')}
                 />
               </div>
 
@@ -1580,44 +1588,8 @@ JSON以外のテキストやマークダウンは含めないでください。
 
                   <div className="space-y-8">
                     {processedData.map((item, index) => {
-                      return (
-                      <div key={index} className="relative border-t pt-6 first:border-t-0 first:pt-0">
-                        <div className="absolute top-6 right-0 z-10 flex flex-col gap-1 pt-1">
-                            <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
-                                <ArrowUpIcon className="w-5 h-5 text-gray-700" />
-                            </button>
-                            <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
-                                <ArrowDownIcon className="w-5 h-5 text-gray-700" />
-                            </button>
-                        </div>
-                        <div className="flex h-full">
-                          {item.sourceImageBase64 && (
-                            <div className="w-1/2 p-2 border rounded-md bg-gray-50 flex flex-col">
-                              <div className="flex justify-between items-center mb-1">
-                                <p className="text-sm font-medium text-gray-700 truncate">
-                                  読み取り元: 
-                                  {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
-                                </p>
-                                <div className="flex items-center gap-1">
-                                  <button onClick={() => handleRotateImage(index, 'left')} className="p-1 rounded-full hover:bg-gray-200" title="左に90度回転">
-                                    <RotateLeftIcon className="w-4 h-4 text-gray-600" />
-                                  </button>
-                                  <button onClick={() => handleRotateImage(index, 'right')} className="p-1 rounded-full hover:bg-gray-200" title="右に90度回転">
-                                    <RotateRightIcon className="w-4 h-4 text-gray-600" />
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="w-full bg-gray-200 flex-grow min-h-0">
-                                <img 
-                                  src={item.sourceImageBase64} 
-                                  alt="Source Document" 
-                                  className="w-full h-full object-contain transition-transform duration-200"
-                                  style={{ transform: `rotate(${item.rotation || 0}deg)`}}
-                                />
-                              </div>
-                            </div>
-                          )}
-                          <div className="w-1/2 h-full overflow-x-auto">
+                      const renderSpreadsheet = (item: ProcessedData, index: number) => (
+                          <div className="w-full h-full overflow-x-auto p-2">
                             {item.type === 'table' ? (
                               <>
                                 <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
@@ -1700,10 +1672,57 @@ JSON以外のテキストやマークダウンは含めないでください。
                               </>
                             )}
                           </div>
+                      );
+
+                      return (
+                      <div key={index} className="relative border-t pt-6 first:border-t-0 first:pt-0">
+                        <div className="absolute top-6 right-0 z-10 flex flex-col gap-1 pt-1">
+                            <button onClick={() => handleMoveCard(index, 'up')} disabled={index === 0} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="上に移動">
+                                <ArrowUpIcon className="w-5 h-5 text-gray-700" />
+                            </button>
+                            <button onClick={() => handleMoveCard(index, 'down')} disabled={index === processedData.length - 1} className="p-1.5 rounded-md bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" title="下に移動">
+                                <ArrowDownIcon className="w-5 h-5 text-gray-700" />
+                            </button>
                         </div>
+                        {item.sourceImageBase64 ? (
+                          <PanelGroup direction="horizontal" className="h-[70vh] border rounded-lg shadow-inner">
+                            <Panel defaultSize={50} minSize={20}>
+                              <div className="w-full h-full p-2 bg-gray-50 flex flex-col">
+                                <div className="flex justify-between items-center mb-1">
+                                  <p className="text-sm font-medium text-gray-700 truncate">
+                                    読み取り元: 
+                                    {item.type === 'transcription' ? item.fileName : `${item.title.name} (${item.title.yearMonth})`}
+                                  </p>
+                                  <div className="flex items-center gap-1">
+                                    <button onClick={() => handleRotateImage(index, 'left')} className="p-1 rounded-full hover:bg-gray-200" title="左に90度回転">
+                                      <RotateLeftIcon className="w-4 h-4 text-gray-600" />
+                                    </button>
+                                    <button onClick={() => handleRotateImage(index, 'right')} className="p-1 rounded-full hover:bg-gray-200" title="右に90度回転">
+                                      <RotateRightIcon className="w-4 h-4 text-gray-600" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="w-full bg-gray-200 flex-grow min-h-0">
+                                  <img 
+                                    src={item.sourceImageBase64} 
+                                    alt="Source Document" 
+                                    className="w-full h-full object-contain transition-transform duration-200"
+                                    style={{ transform: `rotate(${item.rotation || 0}deg)`}}
+                                  />
+                                </div>
+                              </div>
+                            </Panel>
+                            <PanelResizeHandle className="w-2 bg-gray-200 hover:bg-blue-500 active:bg-blue-600 transition-colors" />
+                            <Panel defaultSize={50} minSize={30}>
+                              {renderSpreadsheet(item, index)}
+                            </Panel>
+                          </PanelGroup>
+                        ) : (
+                          renderSpreadsheet(item, index)
+                        )}
                       </div>
-                    )})
-                  }
+                      )
+                    })}
                   </div>
                 </Suspense>
               </div>
