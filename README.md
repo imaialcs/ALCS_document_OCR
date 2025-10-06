@@ -48,7 +48,7 @@
 - Tailwind CSS
 
 ### ビルド方法
-```bash
+{
 # 依存関係のインストール
 npm install
 
@@ -57,6 +57,7 @@ npm run dev
 
 # Windows向け配布版をビルド
 npm run dist
+}
 
 ビルド成果物は build_output ディレクトリに出力されます。
 
