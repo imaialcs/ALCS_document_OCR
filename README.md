@@ -46,3 +46,4 @@ npm install
 ## Changelog
 - v1.2.4 (2025-10-03): Expanded the AI assistant input area to full width, switched the send button to a paper airplane icon, and improved the dev startup script to follow Vite port changes.
 
+- v1.2.5 (2025-10-06): Updated chat alignment for clearer sender separation, added AI typing indicator, and reduced input controls to a more compact default size.

@@ -372,6 +372,7 @@ ipcMain.handle('invoke-ai-chat', async (_event, payload) => {
   }
 
   try {
+    const modelId = process.env.VITE_OPENROUTER_MODEL || 'deepseek/deepseek-chat-v3.1:free';
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -381,7 +382,7 @@ ipcMain.handle('invoke-ai-chat', async (_event, payload) => {
         "X-Title": "ALCS Document OCR", // Optional
       },
       body: JSON.stringify({
-        "model": "x-ai/grok-4-fast:free",
+        "model": modelId,
         "messages": [
           { "role": "user", "content": prompt },
         ],
@@ -390,7 +391,12 @@ ipcMain.handle('invoke-ai-chat', async (_event, payload) => {
 
     if (!response.ok) {
       const errorBody = await response.text();
-      const message = `OpenRouter APIからのエラー応答: ${response.status} ${response.statusText}\n${errorBody}`;
+      let message = `OpenRouter API error: ${response.status} ${response.statusText}\n${errorBody}`;
+      if (response.status === 404 && errorBody.includes('No endpoints found')) {
+        message += `\nThe requested model (${modelId}) is not available. Update VITE_OPENROUTER_MODEL in your .env file to a supported model ID from OpenRouter.`;
+      } else if (response.status === 429) {
+        message += `\n${modelId} is currently rate-limited upstream. Please wait and try again, or add your own provider key via https://openrouter.ai/settings/integrations to increase limits.`;
+      }
       log.error(message);
       return { success: false, error: message };
     }

@@ -67,12 +67,12 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
       <header className="relative flex flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="relative h-10 w-10">
-            <img src={botAvatar} alt="AIアシスタントのアイコン" className="h-full w-full rounded-full object-cover" />
+            <img src={botAvatar} alt="AI assistant avatar" className="h-full w-full rounded-full object-cover" />
             <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-white" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">AIアシスタント</h2>
-            <p className="text-xs text-slate-500">オンライン | 通常3分以内に応答</p>
+            <h2 className="text-lg font-semibold text-slate-900">AI Assistant</h2>
+            <p className="text-xs text-slate-500">Online | responds within 3 minutes</p>
           </div>
         </div>
       </header>
@@ -87,34 +87,44 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
 
           if (isUser) {
             return (
-              <div key={`${msg.role}-${index}`} className="flex items-end justify-end gap-2">
-                <span className="text-xs text-gray-400">{messageTime}</span>
-                <div className="max-w-md rounded-2xl rounded-br-none bg-sky-100 px-4 py-3 text-gray-800 shadow-md">
-                  <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+              <div key={`${msg.role}-${index}`} className="flex justify-end">
+                <div className="flex flex-col items-end space-y-1 text-right">
+                  <div className="flex items-end gap-2">
+                    <div className="max-w-md rounded-2xl rounded-br-none bg-blue-600 px-4 py-3 text-white shadow-md">
+                      <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+                    </div>
+                    <img src={userAvatar} alt="User avatar" className="h-8 w-8 rounded-full object-cover" />
+                  </div>
+                  <span className="text-xs text-gray-400">{messageTime}</span>
                 </div>
-                <img src={userAvatar} alt="ユーザーアイコン" className="h-8 w-8 rounded-full object-cover" />
               </div>
             );
           }
 
           return (
-            <div key={`${msg.role}-${index}`} className="flex items-start gap-3">
-              <img src={botAvatar} alt="AIアシスタントのアイコン" className="h-8 w-8 rounded-full object-cover" />
-              <div className="flex items-end gap-2">
-                <div className="max-w-md rounded-2xl rounded-bl-none bg-white px-4 py-3 text-gray-800 shadow-md">
-                  <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+            <div key={`${msg.role}-${index}`} className="flex justify-start">
+              <div className="flex flex-col items-start space-y-1">
+                <div className="flex items-start gap-3">
+                  <img src={botAvatar} alt="AI assistant avatar" className="h-8 w-8 rounded-full object-cover" />
+                  <div className="max-w-md rounded-2xl rounded-bl-none bg-white px-4 py-3 text-gray-800 shadow-md">
+                    <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+                  </div>
                 </div>
                 <span className="text-xs text-gray-400">{messageTime}</span>
               </div>
             </div>
           );
+
         })}
 
         {isLoading && (
-          <div className="flex items-start gap-3">
-            <img src={botAvatar} alt="AIアシスタントのアイコン" className="h-8 w-8 rounded-full object-cover" />
-            <div className="max-w-sm rounded-2xl rounded-bl-none bg-white px-5 py-3 shadow-md">
-              <TypingIndicator />
+          <div className="flex justify-start">
+            <div className="flex items-start gap-3">
+              <img src={botAvatar} alt="AI assistant avatar" className="h-8 w-8 rounded-full object-cover" />
+              <div className="flex items-center gap-3 rounded-2xl rounded-bl-none bg-white px-4 py-3 shadow-md">
+                <TypingIndicator />
+                <span className="text-xs text-slate-500">AI is typing...</span>
+              </div>
             </div>
           </div>
         )}
@@ -141,7 +151,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
         <div className="flex w-full items-end gap-3">
           <textarea
             ref={textareaRef}
-            className="flex-1 w-full min-h-[48px] max-h-48 resize-none rounded-xl border border-emerald-100 bg-white/80 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            rows={1}
+            className="flex-1 w-full resize-none rounded-md border border-emerald-200 bg-white/80 px-3 py-1.5 text-sm leading-tight text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
             value={userInput}
             onChange={(event) => onUserInput(event.target.value)}
             onKeyDown={(event) => {
@@ -154,12 +165,13 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
           />
           <button
             type="button"
-            className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md transition hover:bg-emerald-600 hover:shadow-lg disabled:cursor-not-allowed disabled:bg-gray-300"
+            className="inline-flex items-center gap-2 px-4 py-1 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-300"
             onClick={onSendMessage}
             disabled={isLoading || !userInput.trim()}
-            aria-label="メッセージを送信"
+            aria-label="Send message"
           >
             <PaperAirplaneIcon className="h-5 w-5 -rotate-45" />
+            <span>Send</span>
           </button>
         </div>
       </footer>
