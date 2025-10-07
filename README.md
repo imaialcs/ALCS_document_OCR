@@ -1,50 +1,67 @@
-﻿# ALCS Document OCR
+# ALCS Document OCR
 
-## Introduction
-ALCS Document OCR is an OCR application for accounting firms. It reads images of invoices, receipts, bank statements, etc., processes the data, and exports it as an Excel file. It is designed to streamline document management and data entry tasks.
+## 概要
+「ALCS Document OCR」は、会計事務所や企業のバックオフィス業務を効率化するために開発されたデスクトップOCRアプリケーションです。画像やPDFから文字情報を高精度に抽出し、編集しやすいデジタルデータへ変換します。
 
-## Features
+## 主な機能
 
-### 1. OCR Processing for Documents
-- **Input Document Types**: Supports PNG, JPG, and PDF files. It can also handle scanned images.
-- **Image Quality Improvement**: Applies image quality improvements to enhance OCR accuracy.
-- **AI-powered Text Recognition**: Utilizes Google Gemini API for advanced text recognition.
+### 1. 高精度なOCRとデータ抽出
+- **多様なファイル形式に対応**：PNG / JPG / PDF などを一括処理  
+- **帳票種別の最適化**：タイムカード・領収書・日計表などを指定すると、AIが最適手順で抽出  
+- **最先端AI**：Google Gemini API を活用して複雑なレイアウトでも正確に取り出し
 
-### 2. AI Assistant for Data Extraction and Analysis
-- **Data Extraction**: Extracts key information such as dates, amounts, and names, and can identify specific data points for OCR processing.
-- **Report Generation**: Generates reports based on OCR results and AI analysis.
-- **Natural Language Interaction**: Allows for natural language interaction with the AI assistant to retrieve information and perform tasks.
+### 2. AIアシスタントによる対話型操作支援
+- **自然言語での指示**：「○○の行を削除」「合計金額を計算」などを理解して自動処理  
+- **修正・加工の効率化**：OCR結果の修正／並べ替え／フィルタリングをチャット形式で実行  
+- **おすすめアクション**：データを分析して次に行う操作を提案
 
-### 3. Document Processing Workflow
-- **Document Input and OCR**: Upload documents and perform OCR to extract text.
-- **AI Analysis and Data Extraction**: Use AI to analyze extracted text and extract specific data.
-- **Data Export and Output**: Export processed data in various formats.
+### 3. 直感的で高機能なデータ編集
+- **画像とテーブルの並列表示**：抽出結果の確認・修正がスムーズ  
+- **スプレッドシート感覚の操作**：右クリックメニューで行列の挿入・削除・コピペに対応  
+- **不要列の非表示**：チェックボックスで表示列をカスタマイズ
 
-### 4. Data Verification and Correction
-- **AI-assisted Data Correction**: Uses AI to identify and correct OCR errors.
-- **Manual Verification and Editing**: Provides an interface for manual verification and editing of extracted data.
-- **Error Handling**: Handles errors during OCR and data extraction processes.
+### 4. データ検証と信頼性の向上
+- **AIによるセルフチェック**：日付形式の異常、計算ミス、必須項目の欠落を自動検知  
+- **画像前処理**：リサイズ・トリミング・コントラスト調整を行い認識精度を向上  
+- **氏名の自動補正**：登録済み名簿と照合してOCR結果を補正
 
-### 5. Output and Integration
-- **Excel Export**: Exports processed data into Excel files (.xlsx/.xlsm).
-- **Data Integration**: Supports integration with other systems by exporting data in a structured format.
-- **Output Customization**: Allows customization of output formats and data fields.
+### 5. シームレスな連携と出力
+- **Excelエクスポート**：.xlsx / .xlsm 形式でダウンロード可能  
+- **テンプレート自動転記**：既存のExcelテンプレートへデータを自動配置  
+- **自動アップデート**：起動時に更新を確認し常に最新状態で利用
 
-## Supported OS
+## 動作環境
 - Windows
 
-## Installation and Usage
+## インストールと使い方
+1. [リリースページ](https://github.com/imaialcs/ALCS_document_OCR/releases)から最新版インストーラー `ALCS文書OCR-Setup-X.X.X.exe` をダウンロード  
+2. インストーラーを実行し、指示に従ってセットアップ  
+3. アプリを起動し、ファイルをドラッグ＆ドロップするだけでOCR処理が開始
 
-1.  Visit the [GitHub Releases](https://github.com/imaialcs/ALCS_document_OCR/releases) page and download the installer (`ALCS-Document-OCR-Setup-X.X.X.exe`).
-2.  Run the installer and follow the on-screen instructions to install the application.
-3.  Launch the application and start OCR processing.
+## 開発者向けの情報
 
-## Author
-- alcs
+### 主要な技術スタック
+- Electron / React
+- TypeScript / Python
+- Vite
+- Google Gemini API
+- Tailwind CSS
+
+### ビルド方法
+```bash
+npm install
+npm run dev
+npm run dist
+```
+ビルド成果物は build_output ディレクトリに出力されます。
+
+## ライセンス
+MIT License
+
+## 作者
+alcs
 
 ## Changelog
-- v1.2.4 (2025-10-03): Expanded the AI assistant input area to full width, switched the send button to a paper airplane icon, and improved the dev startup script to follow Vite port changes.
-
-- v1.2.5 (2025-10-06): Updated chat alignment for clearer sender separation, added AI typing indicator, and reduced input controls to a more compact default size.
-
-- v1.2.6 (2025-10-07): Fixed a bug where only one timecard was detected per image. Also fixed a critical JSON parsing error that occurred when the AI's response contained extra, non-JSON text.
+- **v1.2.6 (2025-10-07)**: 1枚の画像内に複数のタイムカードが存在する場合に1つしか認識されなかった不具合を修正。また、AIの応答に余分なテキストが含まれていた場合に発生する重大なJSONパースエラーを修正。
+- **v1.2.5 (2025-10-06)**: チャットの左右寄せで会話の向きを明確化。AI入力中表示を追加。入力欄をコンパクト化。OpenRouterの既定モデルを DeepSeek に変更。
+- **v1.2.4 (2025-10-03)**: AIアシスタント入力欄を全幅化し、送信ボタンを紙飛行機アイコンへ変更。開発起動スクリプトを動的ポート対応に刷新。
