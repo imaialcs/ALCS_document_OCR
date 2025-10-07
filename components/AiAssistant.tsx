@@ -1,5 +1,5 @@
-﻿import React, { useCallback, useEffect, useRef } from "react";
-import { PaperAirplaneIcon } from "./icons";
+﻿import React, { useEffect, useRef } from "react";
+import { PaperAirplaneIcon, ProcessingIcon } from "./icons";
 import botAvatar from "../assets/ai-assistant-avatar.png";
 import userAvatar from "../User.png"; // User.pngをインポート
 import { SuggestedOperation, ChatMessage } from "../types";
@@ -12,6 +12,9 @@ interface AiAssistantProps {
   onUserInput: (input: string) => void;
   onSendMessage: () => void;
   onExecuteOperation: (operation: SuggestedOperation) => void;
+  onAutoJournal?: () => void;
+  autoJournalDisabled?: boolean;
+  isAutoJournalLoading?: boolean;
 }
 
 const TypingIndicator: React.FC = () => (
@@ -30,6 +33,9 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
   onUserInput,
   onSendMessage,
   onExecuteOperation,
+  onAutoJournal,
+  autoJournalDisabled,
+  isAutoJournalLoading,
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -75,6 +81,19 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
             <p className="text-xs text-slate-500">Online | responds within 3 minutes</p>
           </div>
         </div>
+        {onAutoJournal && (
+          <button
+            type="button"
+            onClick={onAutoJournal}
+            disabled={autoJournalDisabled}
+            className="inline-flex items-center gap-2 rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300"
+          >
+            {isAutoJournalLoading ? (
+              <ProcessingIcon className="h-4 w-4 animate-spin" />
+            ) : null}
+            <span>仕訳を自動入力</span>
+          </button>
+        )}
       </header>
 
       <div className="relative flex-1 space-y-6 overflow-y-auto p-6">

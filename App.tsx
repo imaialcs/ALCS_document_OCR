@@ -302,6 +302,7 @@ const App = () => {
   const [suggestedOperations, setSuggestedOperations] = useState<SuggestedOperation[]>([]);
   const [isSuggestionLoading, setIsSuggestionLoading] = useState(false);
   const [isAiManualLoading, setIsAiManualLoading] = useState(false);
+  const [isAutoJournalLoading, setIsAutoJournalLoading] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -605,7 +606,7 @@ JSON出力形式の例:
 
 利用可能な操作タイプ ("operation"):
 - add_column_with_data: 新しい列を追加し、データを入力します。params: { "header": "列名", "data": ["セル1", "セル2", ...] }
-- create_journal_entry: 仕訳に必要な列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加します。この操作は通常、データ入力は伴いません。
+    - create_journal_entry: 仕訳に必要な列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加し、entries 配列で指定された行に仕訳値を入力します。この操作は通常、AIが勘定科目と金額を推定します。
 - calculate_totals: 指定された数値列の合計を計算し、新しい行として追加します。params: { "columns": ["列名1", "列名2"] }
 - delete_rows: 指定されたインデックスの行を削除します。params: { "row_indices": [0, 2, 3] } または、すべての行を削除する場合は { "all": true }。
 - delete_empty_rows: 空の行をすべて削除します。
@@ -613,17 +614,19 @@ JSON出力形式の例:
 
     try {
       const result = await window.electronAPI.invokeAiChat({ prompt });
-      if (result.success && result.data.choices && result.data.choices[0]) {
-        const responseText = result.data.choices[0].message.content;
-        const parsed = extractJson(responseText);
-        if (parsed && parsed.operations && Array.isArray(parsed.operations)) {
-          setSuggestedOperations(parsed.operations);
-        } else {
-          console.warn("AI response was parsed, but did not contain a valid 'operations' array.", parsed);
-          setSuggestedOperations([]);
-        }
+      const choices = result?.data?.choices;
+      if (!result?.success || !Array.isArray(choices) || choices.length === 0) {
+        console.warn('AI API call was not successful or returned no choices.', result);
+        setSuggestedOperations([]);
+        return;
+      }
+
+      const responseText = choices[0]?.message?.content ?? '';
+      const parsed = extractJson(responseText);
+      if (parsed && parsed.operations && Array.isArray(parsed.operations)) {
+        setSuggestedOperations(parsed.operations);
       } else {
-        console.warn("AI API call was not successful or returned no choices.", result);
+        console.warn("AI response was parsed, but did not contain a valid 'operations' array.", parsed);
         setSuggestedOperations([]);
       }
     } catch (e) {
@@ -1007,6 +1010,17 @@ JSON出力形式の例:
     });
   };
 
+    const handleHeaderRename = (cardIndex: number, colIndex: number, title: string) => {
+    setProcessedData(prevData => {
+      const newData = JSON.parse(JSON.stringify(prevData));
+      const item = newData[cardIndex];
+      if (item && item.type === 'table' && Array.isArray(item.headers)) {
+        item.headers[colIndex] = title;
+      }
+      return newData;
+    });
+  };
+
   const handleAiOperation = (operation: { operation: string; params: any }, targetIndices: number[] | 'all') => {
     if (!operation || !operation.operation) return;
 
@@ -1171,16 +1185,132 @@ JSON出力形式の例:
               break;
           }
           case 'create_journal_entry': {
-              const newHeaders = ['借方勘定科目', '借方金額', '貸方勘定科目', '貸方金額', '摘要'];
-              newHeaders.forEach(h => {
-                  if (!targetCard.headers.includes(h)) {
-                      targetCard.headers.push(h);
+              const journalHeaders = [
+                  { header: '\u501f\u65b9\u52d8\u5b9a\u79d1\u76ee', key: 'debitAccount' },
+                  { header: '\u501f\u65b9\u91d1\u984d', key: 'debitAmount' },
+                  { header: '\u8cb8\u65b9\u52d8\u5b9a\u79d1\u76ee', key: 'creditAccount' },
+                  { header: '\u8cb8\u65b9\u91d1\u984d', key: 'creditAmount' },
+                  { header: '\u6458\u8981', key: 'description' },
+              ];
+
+              journalHeaders.forEach(({ header }) => {
+                  if (!targetCard.headers.includes(header)) {
+                      targetCard.headers.push(header);
                       updateRequired = true;
                   }
               });
+
               targetCard.data.forEach((row: string[]) => {
                   while (row.length < targetCard.headers.length) {
                       row.push('');
+                  }
+              });
+
+              const headerIndexMap: Record<string, number> = {};
+              journalHeaders.forEach(({ header, key }) => {
+                  headerIndexMap[key] = targetCard.headers.indexOf(header);
+              });
+
+              const entries = Array.isArray(params?.entries) ? params.entries : [];
+
+              const toOptionalNumber = (value: any): number | undefined => {
+                  if (value === null || value === undefined || value === '') {
+                      return undefined;
+                  }
+                  if (typeof value === 'number' && Number.isFinite(value)) {
+                      return value;
+                  }
+                  const numeric = Number(String(value).replace(/[^0-9.\-]/g, ''));
+                  return Number.isFinite(numeric) ? numeric : undefined;
+              };
+
+              const toStringValue = (value: any): string => {
+                  if (value === null || value === undefined) {
+                      return '';
+                  }
+                  return String(value);
+              };
+
+              const normaliseEntry = (entry: any) => {
+                  if (!entry || typeof entry !== 'object') {
+                      return null;
+                  }
+                  const rowIndexRaw = entry.rowIndex ?? entry.row_index ?? entry.row;
+                  const matchColumn = entry.matchColumn ?? entry.match_column ?? null;
+                  const matchValue = entry.matchValue ?? entry.match_value ?? null;
+                  const rowIndex = toOptionalNumber(rowIndexRaw);
+                  return {
+                      rowIndex,
+                      matchColumn,
+                      matchValue,
+                      debitAccount: toStringValue(entry.debitAccount ?? entry.debit_account),
+                      debitAmount: toOptionalNumber(entry.debitAmount ?? entry.debit_amount),
+                      creditAccount: toStringValue(entry.creditAccount ?? entry.credit_account),
+                      creditAmount: toOptionalNumber(entry.creditAmount ?? entry.credit_amount),
+                      description: toStringValue(entry.description ?? entry.memo),
+                  };
+              };
+
+              const resolveRowIndex = (entry: ReturnType<typeof normaliseEntry>) => {
+                  if (!entry) {
+                      return -1;
+                  }
+                  if (typeof entry.rowIndex === 'number') {
+                      const base = Math.floor(entry.rowIndex);
+                      const candidates = new Set<number>();
+                      candidates.add(base);
+                      if (base >= 1) {
+                          candidates.add(base - 1);
+                      }
+                      for (const candidate of candidates) {
+                          if (candidate >= 0 && candidate < targetCard.data.length) {
+                              return candidate;
+                          }
+                      }
+                  }
+                  if (entry.matchColumn && entry.matchValue !== undefined) {
+                      const columnName = String(entry.matchColumn);
+                      const colIdx = targetCard.headers.indexOf(columnName);
+                      if (colIdx !== -1) {
+                          const sought = String(entry.matchValue).trim();
+                          const targetIdx = targetCard.data.findIndex((row: string[]) => String(row[colIdx] ?? '').trim() === sought);
+                          if (targetIdx !== -1) {
+                              return targetIdx;
+                          }
+                      }
+                  }
+                  return -1;
+              };
+
+              entries.forEach((rawEntry: any) => {
+                  const entry = normaliseEntry(rawEntry);
+                  const rowIdx = resolveRowIndex(entry);
+                  if (rowIdx === -1) {
+                      console.warn('create_journal_entry: could not resolve row for entry', rawEntry);
+                      return;
+                  }
+
+                  const row = targetCard.data[rowIdx];
+
+                  const assignValue = (key: keyof typeof headerIndexMap, value: string | number | undefined) => {
+                      const colIdx = headerIndexMap[key as string];
+                      if (colIdx === undefined || colIdx < 0) {
+                          return;
+                      }
+                      if (value === undefined || value === null) {
+                          row[colIdx] = '';
+                      } else {
+                          row[colIdx] = typeof value === 'number' && Number.isFinite(value) ? String(value) : String(value);
+                      }
+                  };
+
+                  if (entry) {
+                      assignValue('debitAccount', entry.debitAccount);
+                      assignValue('debitAmount', entry.debitAmount);
+                      assignValue('creditAccount', entry.creditAccount);
+                      assignValue('creditAmount', entry.creditAmount);
+                      assignValue('description', entry.description);
+                      updateRequired = true;
                   }
               });
               break;
@@ -1207,13 +1337,16 @@ JSON出力形式の例:
     }
   };
 
-  const handleAiSendMessage = async () => {
-    const trimmedInput = aiUserInput.trim();
+const handleAiSendMessage = async (overrideInput?: string) => {
+    const inputValue = overrideInput !== undefined ? overrideInput : aiUserInput;
+    const trimmedInput = inputValue.trim();
     if (!trimmedInput || !window.electronAPI?.invokeAiChat) return;
 
     const newMessages: ChatMessage[] = [...aiMessages, { role: 'user', content: trimmedInput }];
     setAiMessages(newMessages);
-    setAiUserInput('');
+    if (overrideInput === undefined) {
+      setAiUserInput('');
+    }
     setIsAiManualLoading(true);
 
     const spreadsheets = processedData.filter(d => d.type === 'table' || d.type === 'timecard');
@@ -1250,7 +1383,7 @@ ${dataString}
     - delete_rows: 行を削除します。params: { "row_indices": [0, 2, 3] }
     - calculate_totals: 列の合計を計算します。params: { "columns": ["列名1"] }
     - delete_empty_rows: 空の行を削除します。
-    - create_journal_entry: 仕訳用の列を追加します。
+    - create_journal_entry: 仕訳に必要な列（借方勘定科目、借方金額、貸方勘定科目、貸方金額、摘要）を追加し、entries 配列で指定された行に仕訳値を入力します。entries の各要素は { "rowIndex": 0, "debitAccount": "...", "debitAmount": 0, "creditAccount": "...", "creditAmount": 0, "description": "..." } です。rowIndex を指定できない場合は { "matchColumn": "列名", "matchValue": "値" } で行を特定してください。
 
     操作モードのJSON出力例:
     \`\`\`json
@@ -1297,10 +1430,33 @@ ${dataString}
     } finally {
       setIsAiManualLoading(false);
     }
-  };
+};
 
 
-  const handleDownloadAll = async () => {
+const handleAutoJournal = async () => {
+  if (!processedData.some(d => d.type === 'table')) {
+    setError('仕訳を自動入力できる表形式データが見つかりません。');
+    return;
+  }
+  if (isSuggestionLoading || isAiManualLoading || isAutoJournalLoading) {
+    return;
+  }
+
+  const autoPrompt = '[AUTO] Review the current table and propose a create_journal_entry operation. Produce entries with either rowIndex (zero-based) or matchColumn/matchValue to identify each target row. Include debitAccount, debitAmount, creditAccount, creditAmount, and description fields. Use null for amounts you cannot confirm, preserve the original row order, and do not skip blank rows.';
+
+  setError(null);
+  setIsAutoJournalLoading(true);
+  try {
+    await handleAiSendMessage(autoPrompt);
+  } finally {
+    setIsAutoJournalLoading(false);
+  }
+};
+
+const hasTableForJournal = processedData.some(d => d.type === 'table');
+
+
+const handleDownloadAll = async () => {
     for (const item of processedData) {
       await handleDownloadSingle(item);
     }
@@ -1683,12 +1839,15 @@ ${dataString}
               <div className="relative max-w-4xl mx-auto mb-12 px-4 sm:px-0">
                 <AiAssistant 
                   suggestedOperations={suggestedOperations}
-                  isLoading={isSuggestionLoading || isAiManualLoading}
+                  isLoading={isSuggestionLoading || isAiManualLoading || isAutoJournalLoading}
                   messages={aiMessages}
                   userInput={aiUserInput}
                   onUserInput={setAiUserInput}
                   onSendMessage={handleAiSendMessage}
                   onExecuteOperation={(operation) => handleAiOperation(operation, 'all')}
+                  onAutoJournal={hasTableForJournal ? handleAutoJournal : undefined}
+                  autoJournalDisabled={!hasTableForJournal || isSuggestionLoading || isAiManualLoading || isAutoJournalLoading}
+                  isAutoJournalLoading={isAutoJournalLoading}
                 />
               </div>
 
@@ -1748,6 +1907,7 @@ ${dataString}
                                     onRowRemove={handleRowRemove}
                                     onColCreate={handleColCreate}
                                     onColRemove={handleColRemove}
+                                    onHeaderRename={handleHeaderRename}
                                 />
                               </>
                             ) : item.type === 'timecard' ? (
@@ -1785,6 +1945,7 @@ ${dataString}
                                         onRowRemove={handleRowRemove}
                                         onColCreate={handleColCreate}
                                         onColRemove={handleColRemove}
+                                        onHeaderRename={handleHeaderRename}
                                     />                            </>
                             ) : (
                               <>

@@ -13,3 +13,7 @@ declare module '*.png' {
   const src: string;
   export default src;
 }
+
+declare module 'jspreadsheet-ce';
+declare module 'jsuites';
+

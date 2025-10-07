@@ -1,4 +1,4 @@
-// main.js
+﻿// main.js
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -244,7 +244,8 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
   const results = [];
   const aggregatedUsage = { promptTokens: 0, outputTokens: 0 };
 
-  for (const page of pages) {
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const page = pages[pageIndex];
     // Add a defensive check to ensure the page object is not null/undefined
     if (!page) {
       log.error('An undefined page was received in invoke-gemini-ocr. Skipping.');
@@ -252,21 +253,58 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
       continue; // Skip this iteration
     }
     try {
-      log.info(`Starting OCR for file: ${page.name} with document type: ${documentType}`); // 処理開始ログを追加
-      
-      let prompt;
+      const pagePosition = `page ${pageIndex + 1} of ${pages.length}`;
+      log.info(`Starting OCR for file: ${page.name} with document type: ${documentType}`);
+
+      const docTypeLabels = {
+        '預収書': 'receipt',
+        '日計表': 'daily balance sheet',
+        '銀行通帳': 'bank passbook',
+        'その他（泛用テーブル）': 'generic table',
+        'タイムカード': 'timecard',
+      };
+      const friendlyDocName = docTypeLabels[documentType] ?? 'document';
+      let prompt = '';
+
       switch (documentType) {
-        case '領収書':
-          prompt = 'この画像は領収書です。発行日、合計金額、支払元、支払先、但し書き、登録番号をJSON形式で抽出してください。';
+        case '預収書':
+          prompt = `You are processing ${friendlyDocName} ${pagePosition}. Treat this page independently; never reuse content from previous pages.
+Return exactly one JSON object with this structure:
+{"type":"table","title":{"yearMonth":"YYYY-MM","name":"recipient"},"headers":["issuer","issueDate","amount","tax","note"],"data":[["text","..."]]}
+Rules:
+- Keep the row order exactly as printed.
+- Preserve empty or separator rows by outputting arrays filled with "".
+- Use "" for unreadable text cells and null for unreadable numeric cells.
+- Do not merge rows or invent totals.
+Only output JSON.`;
           break;
         case '日計表':
         case '銀行通帳':
-        case 'その他（汎用テーブル）':
-          prompt = 'この画像はテーブル（表）形式のドキュメントです。1行目をヘッダー（キー）とし、2行目以降を各行のデータ（バリュー）として、JSON配列形式で構造化して抽出してください。表の中に空のセルがある場合は、その箇所を空文字列（""）として正確に表現してください。';
+        case 'その他（泛用テーブル）':
+          prompt = `You are processing ${friendlyDocName} ${pagePosition}. Treat this page independently and return a single JSON object:
+{"type":"table","title":{"yearMonth":"YYYY-MM","name":"documentTitle"},"headers":["..."],"data":[["row1col1","row1col2","..."]]}
+Requirements:
+- Keep the header count consistent for every row.
+- Preserve blank rows or spacing rows by emitting arrays of "" strings.
+- Maintain the row order exactly as shown; do not drop or merge rows.
+- Use "" for unreadable text cells and null for numbers you cannot read.
+Respond with JSON only.`;
           break;
         case 'タイムカード':
         default:
-          prompt = `画像から情報を抽出し、JSON形式で出力してください。画像が勤怠管理表やタイムカードの場合、timecard形式で出力: {"type":"timecard", "title":{"yearMonth":"YYYY年MM月", "name":"氏名"}, "days":[{"date":"D", "dayOfWeek":"ddd", "morningStart":"HH:mm", "morningEnd":"HH:mm", "afternoonStart":"HH:mm", "afternoonEnd":"HH:mm"}]}。timecardの時間は、出勤・退勤のペアがない場合nullにしてください。画像が請求書や明細書などの表形式データの場合、table形式で出力: {"type":"table", "title":{"yearMonth":"YYYY年MM月", "name":"件名や宛名"}, "headers":["ヘッダー1", "ヘッダー2", "..."], "data":[["行1セル1", "..."], ["行2セル1", "..."]]}。上記いずれにも該当しない場合は、transcription形式で出力: {"type":"transcription", "fileName":"元のファイル名", "content":"文字起こし結果"}。氏名や件名が読み取れない場合は、"不明"としてください。`;
+          prompt = `You are an expert OCR system. The user has provided an image that may contain one or more Japanese time cards. Your task is to identify every time card on the page and extract its data.
+
+Return a JSON array, where each object in the array represents a single time card.
+
+For each time card, use the following JSON structure:
+{"type":"timecard","title":{"yearMonth":"YYYY-MM","name":"employee"},"days":[{"date":"D","dayOfWeek":"Mon","morningStart":"HH:mm","morningEnd":"HH:mm","afternoonStart":"HH:mm","afternoonEnd":"HH:mm"}]}
+
+Key Instructions:
+- Find ALL time cards on the image. If you find multiple, return an array of multiple JSON objects. If you find only one, return an array with a single object.
+- For each time card, include one entry per day in the same order as it appears.
+- Preserve blank or empty days by outputting the date with all time fields set to null.
+- Never guess times or names; if they are unclear, output null for times and the best possible transcription for names.
+- The final output must be ONLY a valid JSON array. Do not include any other text or explanations.`;
           break;
       }
 
@@ -283,7 +321,7 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
       // log.info('Before generateContent call');
       // log.info('generateContent arguments:', { model: 'gemini-flash-lite-latest', contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }], generationConfig: generationConfig });
       const result = await genAI.models.generateContent({
-        model: 'gemini-flash-lite-latest',
+        model: 'gemini-flash-latest',
         contents: [{ role: 'user', parts: [{ text: prompt }, imagePart] }],
         generationConfig: generationConfig,
       });
@@ -306,19 +344,79 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
       if (jsonBlockMatch && jsonBlockMatch[1]) {
         jsonText = jsonBlockMatch[1].trim();
       } else {
-        // 2. If no markdown block, try to find the content between the first '{' and the last '}'
-        const jsonObjectMatch = rawText.match(/\{[\s\S]*\}/);
-        if (jsonObjectMatch) {
-          jsonText = jsonObjectMatch[0];
+        // 2. If no markdown block, find the main JSON object/array
+        const firstBracket = rawText.indexOf('[');
+        const firstBrace = rawText.indexOf('{');
+        
+        let startIndex = -1;
+        
+        if (firstBracket === -1) {
+          startIndex = firstBrace;
+        } else if (firstBrace === -1) {
+          startIndex = firstBracket;
         } else {
-          // 3. Fallback: remove all markdown fences and trim
-          jsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+          startIndex = Math.min(firstBracket, firstBrace);
+        }
+
+        if (startIndex !== -1) {
+          const lastBracket = rawText.lastIndexOf(']');
+          const lastBrace = rawText.lastIndexOf('}');
+          const endIndex = Math.max(lastBracket, lastBrace);
+
+          if (endIndex > startIndex) {
+            jsonText = rawText.substring(startIndex, endIndex + 1);
+          }
         }
       }
 
       const parsedData = JSON.parse(jsonText);
 
-      const dataToProcess = Array.isArray(parsedData) ? parsedData : [parsedData];
+      // Normalize Gemini output: 日計表などで1行=1オブジェクトの配列として返却された場合に、表形式へまとめる
+      let normalizedData = parsedData;
+      if (
+        Array.isArray(parsedData) &&
+        parsedData.length > 0 &&
+        ['日計表', '銀行通帳', 'その他（泛用テーブル）'].includes(documentType) &&
+        parsedData.every(
+          (row) =>
+            row &&
+            typeof row === 'object' &&
+            !Array.isArray(row) &&
+            !('type' in row) &&
+            Object.keys(row).length > 0
+        )
+      ) {
+        const headerKeys = Array.from(
+          new Set(
+            parsedData.flatMap((row) =>
+              Object.keys(row).map((key) => (key == null ? '' : String(key)))
+            )
+          )
+        );
+
+        if (headerKeys.length > 0) {
+          const tableData = parsedData.map((row) =>
+            headerKeys.map((key) => {
+              const value = row[key];
+              if (value === null || value === undefined) {
+                return '';
+              }
+              return String(value);
+            })
+          );
+
+          normalizedData = [
+            {
+              type: 'table',
+              title: { yearMonth: '', name: '' },
+              headers: headerKeys,
+              data: tableData,
+            },
+          ];
+        }
+      }
+
+      const dataToProcess = Array.isArray(normalizedData) ? normalizedData : [normalizedData];
 
       for (const data of dataToProcess) {
         // Add original filename to transcription type
@@ -401,7 +499,15 @@ ipcMain.handle('invoke-ai-chat', async (_event, payload) => {
       return { success: false, error: message };
     }
 
-    const responseData = await response.json();
+    const rawText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(rawText);
+    } catch (parseError) {
+      const message = 'OpenRouter APIからの応答を解析できませんでした。もう一度お試しください。';
+      log.error(message, parseError, rawText);
+      return { success: false, error: message };
+    }
 
     return {
       success: true,
@@ -751,3 +857,4 @@ ipcMain.handle('read-roster-file', async (event, { filePath, sheetName, column, 
     });
   });
 });
+

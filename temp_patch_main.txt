@@ -1,0 +1,124 @@
+*** Update File: main.js
+@@
+-  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+-    const page = pages[pageIndex];
+-    // Add a defensive check to ensure the page object is not null/undefined
+-    if (!page) {
+-      log.error('An undefined page was received in invoke-gemini-ocr. Skipping.');
+-      console.error('An undefined page was received in invoke-gemini-ocr. Skipping.');
+-      continue; // Skip this iteration
+-    }
+-    try {
+-      const pagePosition = `page ${pageIndex + 1} of ${pages.length}`;
+-      log.info(`Starting OCR for file: ${page.name} with document type: ${documentType}`);
+-
+-      const docTypeLabels = {
+-        '領収書': 'receipt',
+-        '日計表': 'daily balance sheet',
+-        '銀行通帳': 'bank passbook',
+-        'その他（汎用テーブル）': 'generic table',
+-        'タイムカード': 'timecard',
+-      };
+-      const friendlyDocName = docTypeLabels[documentType] ?? 'document';
+-      let prompt = '';
+-
+-      switch (documentType) {
+-        case '領収書':
+-          prompt = `You are processing ${friendlyDocName} ${pagePosition}. Treat this page independently; never reuse content from previous pages.
+-Return exactly one JSON object with this structure:
+-{"type":"table","title":{"yearMonth":"YYYY-MM","name":"recipient"},"headers":["issuer","issueDate","amount","tax","note"],"data":[["text","..."]]}
+-Rules:
+-- Keep the row order exactly as printed.
+-- Preserve empty or separator rows by outputting arrays filled with "".
+-- Use "" for unreadable text cells and null for unreadable numeric cells.
+-- Do not merge rows or invent totals.
+-Only output JSON.`;
+-          break;
+-        case '日計表':
+-        case '銀行通帳':
+-        case 'その他（汎用テーブル）':
+-          prompt = `You are processing ${friendlyDocName} ${pagePosition}. Treat this page independently and return a single JSON object:
+-{"type":"table","title":{"yearMonth":"YYYY-MM","name":"documentTitle"},"headers":["..."],"data":[["row1col1","row1col2","..."]]}
+-Requirements:
+-- Keep the header count consistent for every row.
+-- Preserve blank rows or spacing rows by emitting arrays of "" strings.
+-- Maintain the row order exactly as shown; do not drop or merge rows.
+-- Use "" for unreadable text cells and null for numbers you cannot read.
+-Respond with JSON only.`;
+-          break;
+-        case 'タイムカード':
+-        default:
+-          prompt = `You are processing a timecard ${pagePosition}. Return JSON in the following format:
+-{"type":"timecard","title":{"yearMonth":"YYYY-MM","name":"employee"},"days":[{"date":"D","dayOfWeek":"Mon","morningStart":"HH:mm","morningEnd":"HH:mm","afternoonStart":"HH:mm","afternoonEnd":"HH:mm"}]}
+-Instructions:
+-- Include one entry per day appearing on the page in the same order.
+-- Preserve blank days by outputting the date with all time fields set to null.
+-- Never guess times; if they are unclear, output null.
+-- Do not aggregate data across pages.
+-Only output JSON.`;
+-          break;
+-      }
++  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
++    const page = pages[pageIndex];
++    // Add a defensive check to ensure the page object is not null/undefined
++    if (!page) {
++      log.error('An undefined page was received in invoke-gemini-ocr. Skipping.');
++      console.error('An undefined page was received in invoke-gemini-ocr. Skipping.');
++      continue; // Skip this iteration
++    }
++    try {
++      const pagePosition = `page ${pageIndex + 1} of ${pages.length}`;
++      log.info(`Starting OCR for file: ${page.name} with document type: ${documentType}`);
++
++      const docTypeLabels: Record<string, string> = {
++        '領収書': 'receipt',
++        '日計表': 'daily balance sheet',
++        '銀行通帳': 'bank passbook',
++        'その他（汎用テーブル）': 'generic table',
++        'タイムカード': 'timecard',
++      };
++      const friendlyDocName = docTypeLabels[documentType] ?? 'document';
++      let prompt = '';
++
++      switch (documentType) {
++        case '領収書':
++          prompt = [
++            `You are processing ${friendlyDocName} ${pagePosition}. Treat this page independently; never reuse or merge content from other pages.`,
++            `Return exactly one JSON object with the structure {"type":"table","title":{"yearMonth":"YYYY-MM","name":"recipient"},"headers":["issuer","issueDate","amount","tax","note"],"data":[["col1","col2",...]]}.`,
++            `Rules:`,
++            `- Keep the row order exactly as printed.`,
++            `- Preserve empty or separator rows by outputting arrays filled with "" strings.`,
++            `- Use "" for unreadable text cells and null for unreadable numeric cells.`,
++            `- Do not merge rows or invent totals.`,
++            `Respond with JSON only (no markdown).`,
++          ].join('\n');
++          break;
++        case '日計表':
++        case '銀行通帳':
++        case 'その他（汎用テーブル）':
++          prompt = [
++            `You are processing ${friendlyDocName} ${pagePosition}. Treat this page independently and return a single JSON object.`,
++            `Format: {"type":"table","title":{"yearMonth":"YYYY-MM","name":"documentTitle"},"headers":["col1","col2",...],"data":[["row1col1","row1col2",...]]}.`,
++            `Requirements:`,
++            `- The number of columns must be identical for every row.`,
++            `- Preserve blank rows or spacing rows by emitting arrays consisting entirely of "" strings.`,
++            `- Maintain the original row order; do not drop, merge, or sort rows.`,
++            `- Use "" for unreadable text cells and null for numbers you cannot read.`,
++            `Respond with JSON only (no markdown).`,
++          ].join('\n');
++          break;
++        case 'タイムカード':
++        default:
++          prompt = [
++            `You are processing a ${friendlyDocName} ${pagePosition}. Treat this page independently.`,
++            `If the page shows more than one physical timecard, return a JSON array with one object per card. If it shows just one card, return a single object. In both cases use the structure {"type":"timecard","title":{"yearMonth":"YYYY-MM","name":"employee"},"days":[{"date":"D","dayOfWeek":"Mon","morningStart":"HH:mm","morningEnd":"HH:mm","afternoonStart":"HH:mm","afternoonEnd":"HH:mm"}]}.`,
++            `Rules:`,
++            `- Keep the day entries in the same order as they appear on the card.`,
++            `- Preserve blank or missing days by including the date with all time fields set to null.`,
++            `- Never guess values; output null for any time you cannot read.`,
++            `- Do not merge data from separate cards or copy data between them.`,
++            `Respond with JSON only (no markdown).`,
++          ].join('\n');
++          break;
++      }
+*** End Patch
