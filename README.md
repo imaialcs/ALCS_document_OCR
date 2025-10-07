@@ -47,4 +47,4 @@ ALCS Document OCR is an OCR application for accounting firms. It reads images of
 
 - v1.2.5 (2025-10-06): Updated chat alignment for clearer sender separation, added AI typing indicator, and reduced input controls to a more compact default size.
 
-- v1.2.6 (2025-10-07): Fixed a bug where only one timecard was detected per image, even if multiple were present. The OCR prompt has been updated to correctly identify and process all timecards on a single page.
+- v1.2.6 (2025-10-07): Fixed a bug where only one timecard was detected per image. Also fixed a critical JSON parsing error that occurred when the AI's response contained extra, non-JSON text.

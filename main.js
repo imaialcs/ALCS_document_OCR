@@ -344,13 +344,28 @@ Key Instructions:
       if (jsonBlockMatch && jsonBlockMatch[1]) {
         jsonText = jsonBlockMatch[1].trim();
       } else {
-        // 2. If no markdown block, try to find the content between the first '{' and the last '}'
-        const jsonObjectMatch = rawText.match(/\{[\s\S]*\}/);
-        if (jsonObjectMatch) {
-          jsonText = jsonObjectMatch[0];
+        // 2. If no markdown block, find the main JSON object/array
+        const firstBracket = rawText.indexOf('[');
+        const firstBrace = rawText.indexOf('{');
+        
+        let startIndex = -1;
+        
+        if (firstBracket === -1) {
+          startIndex = firstBrace;
+        } else if (firstBrace === -1) {
+          startIndex = firstBracket;
         } else {
-          // 3. Fallback: remove all markdown fences and trim
-          jsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+          startIndex = Math.min(firstBracket, firstBrace);
+        }
+
+        if (startIndex !== -1) {
+          const lastBracket = rawText.lastIndexOf(']');
+          const lastBrace = rawText.lastIndexOf('}');
+          const endIndex = Math.max(lastBracket, lastBrace);
+
+          if (endIndex > startIndex) {
+            jsonText = rawText.substring(startIndex, endIndex + 1);
+          }
         }
       }
 
