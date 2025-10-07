@@ -5,7 +5,7 @@ try {
     invokeAiChat: (payload: { prompt: string }) => ipcRenderer.invoke('invoke-ai-chat', payload),
 
     // --- Secure Gemini OCR Invocation ---
-    invokeGeminiOcr: (pages: { base64: string; mimeType: string; name: string }[]) => ipcRenderer.invoke('invoke-gemini-ocr', pages),
+    invokeGeminiOcr: (pages: { base64: string; mimeType: string; name: string }[], documentType: string) => ipcRenderer.invoke('invoke-gemini-ocr', pages, documentType),
 
       // --- Image Preprocessing API ---
       processImageForOcr: (arrayBuffer: ArrayBuffer, options: { isAutocropEnabled: boolean, isContrastAdjustmentEnabled: boolean }) => ipcRenderer.invoke('process-image-for-ocr', arrayBuffer, options),

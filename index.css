@@ -1373,3 +1373,11 @@ video {
 .ht-validation-error {
   background-color: #fef2f2; /* Tailwind's bg-red-50 */
 }
+.jspreadsheet-validation-error {
+  background-color: #fef2f2 !important;
+}
+
+.jspreadsheet-wrapper .jspreadsheet-validation-error input {
+  background-color: #fef2f2 !important;
+}
+

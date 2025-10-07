@@ -98,6 +98,13 @@ export const ArrowDownIcon: React.FC<IconProps> = ({ className, title, ...props 
   </svg>
 );
 
+export const PaperAirplaneIcon: React.FC<IconProps> = ({ className, title, ...props }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className} {...props}>
+    {title && <title>{title}</title>}
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.874L6 12zm0 0h12" />
+  </svg>
+);
+
 export const MergeIcon: React.FC<IconProps> = ({ className, title, ...props }) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
     {title && <title>{title}</title>}
