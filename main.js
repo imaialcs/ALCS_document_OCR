@@ -358,6 +358,8 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
 
 ipcMain.handle('invoke-ai-chat', async (_event, payload) => {
   const apiKey = process.env.VITE_OPENROUTER_API_KEY;
+  const modelId = 'deepseek/deepseek-chat-v3.1:free'; // User requested model
+
   if (!apiKey) {
     const message = 'OpenRouter APIキーが.envファイルに設定されていません。(VITE_OPENROUTER_API_KEY)';
     log.error(message);
@@ -372,7 +374,6 @@ ipcMain.handle('invoke-ai-chat', async (_event, payload) => {
   }
 
   try {
-    const modelId = process.env.VITE_OPENROUTER_MODEL || 'deepseek/deepseek-chat-v3.1:free';
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -393,9 +394,9 @@ ipcMain.handle('invoke-ai-chat', async (_event, payload) => {
       const errorBody = await response.text();
       let message = `OpenRouter API error: ${response.status} ${response.statusText}\n${errorBody}`;
       if (response.status === 404 && errorBody.includes('No endpoints found')) {
-        message += `\nThe requested model (${modelId}) is not available. Update VITE_OPENROUTER_MODEL in your .env file to a supported model ID from OpenRouter.`;
+        message += `\nThe requested model (${modelId}) is not available.`;
       } else if (response.status === 429) {
-        message += `\n${modelId} is currently rate-limited upstream. Please wait and try again, or add your own provider key via https://openrouter.ai/settings/integrations to increase limits.`;
+        message += `\n${modelId} is currently rate-limited upstream. Please wait and try again.`;
       }
       log.error(message);
       return { success: false, error: message };
