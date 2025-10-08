@@ -77,8 +77,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
             <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-white" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">AI Assistant</h2>
-            <p className="text-xs text-slate-500">Online | responds within 3 minutes</p>
+            <h2 className="text-lg font-semibold text-slate-900">AIアシスタント</h2>
+            <p className="text-xs text-slate-500">オンライン | 3分以内に応答します</p>
           </div>
         </div>
         {onAutoJournal && (
@@ -142,7 +142,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
               <img src={botAvatar} alt="AI assistant avatar" className="h-8 w-8 rounded-full object-cover" />
               <div className="flex items-center gap-3 rounded-2xl rounded-bl-none bg-white px-4 py-3 shadow-md">
                 <TypingIndicator />
-                <span className="text-xs text-slate-500">AI is typing...</span>
+                <span className="text-xs text-slate-500">AIが考えています...</span>
               </div>
             </div>
           </div>
@@ -187,10 +187,10 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({
             className="inline-flex items-center gap-2 px-4 py-1 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-300"
             onClick={onSendMessage}
             disabled={isLoading || !userInput.trim()}
-            aria-label="Send message"
+            aria-label="メッセージを送信"
           >
             <PaperAirplaneIcon className="h-5 w-5 -rotate-45" />
-            <span>Send</span>
+            <span>送信</span>
           </button>
         </div>
       </footer>

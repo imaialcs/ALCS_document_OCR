@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay, SuggestedOperation, ChatMessage } from './types';
 import { withRetry, transformTimecardJsonForExcelHandler, readFileAsArrayBuffer } from './services/utils';
-import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, RotateLeftIcon, RotateRightIcon } from './components/icons';
+import { UploadIcon, DownloadIcon, ProcessingIcon, FileIcon, CloseIcon, MailIcon, SparklesIcon, ChevronDownIcon, DocumentTextIcon, ArrowUpIcon, ArrowDownIcon, RotateLeftIcon, RotateRightIcon, AdjustmentsHorizontalIcon, UndoIcon } from './components/icons';
 
 import DataTable from './components/DataTable';
 const UpdateNotification = lazy(() => import('./components/UpdateNotification'));
@@ -195,7 +195,7 @@ const findBestMatch = (name: string, roster: string[]): string | null => {
     if (!roster || roster.length === 0 || !name) return null;
 
     let bestMatch: string | null = null;
-    let minDistance = Infinity;
+    let bestNormalizedDistance = 1.0; // 1.0 means 100% different
 
     const normalizedName = name.replace(/\s+/g, '');
     if (!normalizedName) {
@@ -207,16 +207,31 @@ const findBestMatch = (name: string, roster: string[]): string | null => {
         if (!normalizedRosterName) continue;
 
         const distance = levenshteinDistance(normalizedName, normalizedRosterName);
+        // Avoid division by zero for empty strings
+        const maxLength = Math.max(normalizedName.length, normalizedRosterName.length);
+        if (maxLength === 0) {
+            // If both strings are empty, they are a perfect match.
+            if (distance === 0) {
+                bestNormalizedDistance = 0;
+                bestMatch = rosterName;
+            }
+            continue;
+        }
+        const normalizedDistance = distance / maxLength;
         
-        if (distance < minDistance) {
-            minDistance = distance;
+        if (normalizedDistance < bestNormalizedDistance) {
+            bestNormalizedDistance = normalizedDistance;
             bestMatch = rosterName;
         }
     }
 
-    // 閾値を撤廃し、最も類似度の高い候補を常に返す。
-    // ただし、あまりにもかけ離れている場合（距離が名前の長さの半分を超えるなど）はnullを返す、という選択肢もあるが、
-    // 今回はユーザーの要望に基づき、常に最も近いものを返す。
+    // Threshold: if the best match has a normalized distance of 40% or more,
+    // consider it a poor match and don't correct.
+    // This prevents correcting a completely garbled name to something random from the roster.
+    if (bestMatch && bestNormalizedDistance >= 0.4) {
+        return null;
+    }
+
     return bestMatch;
 };
 
@@ -274,6 +289,7 @@ const extractJson = (text: string): any | null => {
 const App = () => {
   const [previews, setPreviews] = useState<FilePreview[]>([]);
   const [processedData, setProcessedData] = useState<ProcessedData[]>([]);
+  const [originalProcessedData, setOriginalProcessedData] = useState<ProcessedData[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancelProcessingRef = useRef(false);
@@ -320,6 +336,121 @@ const App = () => {
       setHasScrolledToResults(true);
     }
   }, [processedData, loading, hasScrolledToResults]);
+
+  // --- Helper: 時刻を5分単位で丸める（mode: 'up'|'down'|'nearest'） ---
+  const roundTimeTo5Minutes = (timeStr: string | null | undefined, mode: 'up' | 'down' | 'nearest' = 'up'): string | null => {
+    if (!timeStr) return null;
+    const m = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return timeStr;
+    let hh = parseInt(m[1], 10);
+    let mm = parseInt(m[2], 10);
+
+    const rem = mm % 5;
+    if (rem === 0) {
+      // 既に5分単位
+    } else if (mode === 'up') {
+      mm = mm + (5 - rem);
+    } else if (mode === 'down') {
+      mm = mm - rem;
+    } else { // nearest
+      // 0..4 -> down for 0-2, up for 3-4
+      if (rem >= 3) mm = mm + (5 - rem);
+      else mm = mm - rem;
+    }
+
+    if (mm >= 60) {
+      mm = mm - 60;
+      hh = (hh + 1) % 24;
+    }
+    if (mm < 0) {
+      mm = 0;
+    }
+    const hhStr = hh.toString().padStart(2, '0');
+    const mmStr = mm.toString().padStart(2, '0');
+    return `${hhStr}:${mmStr}`;
+  };
+
+    // Fill missing dates between min and max in the same month/year with empty day objects
+    const fillMissingDates = (days: any[]): any[] => {
+      if (!Array.isArray(days) || days.length === 0) return days;
+      const parsed = days.map((d, idx) => {
+        const raw = String(d?.date ?? '').trim();
+        const norm = raw.replace(/[-\.]/g, '/');
+        const dt = new Date(norm);
+        return { idx, raw, valid: !isNaN(dt.getTime()), date: dt };
+      });
+      const valids = parsed.filter(p => p.valid);
+      if (valids.length === 0) return days;
+      const year = valids[0].date.getFullYear();
+      const month = valids[0].date.getMonth();
+      if (!valids.every(v => v.date.getFullYear() === year && v.date.getMonth() === month)) {
+        return days; // different months: don't attempt to fill
+      }
+      const minDay = Math.min(...valids.map(v => v.date.getDate()));
+      const maxDay = Math.max(...valids.map(v => v.date.getDate()));
+      const filled: any[] = [];
+      const map: Record<number, any> = {};
+      valids.forEach(v => {
+        map[v.date.getDate()] = days[v.idx];
+      });
+      for (let d = minDay; d <= maxDay; d++) {
+        if (map[d]) {
+          filled.push(map[d]);
+        } else {
+          const paddedDay = String(d).padStart(2, '0');
+          const dateStr = `${year}/${String(month + 1).padStart(2, '0')}/${paddedDay}`;
+          filled.push({ date: dateStr, dayOfWeek: '', morningStart: '', morningEnd: '', afternoonStart: '', afternoonEnd: '' });
+        }
+      }
+      return filled;
+    };
+
+  // --- Handler: 指定のtimecardに対して5分の丸めを適用 ---
+  const handleRoundTimecard = (cardIndex: number, mode: 'up' | 'down' | 'nearest') => {
+    setProcessedData(prev => {
+      const copy = prev.map((c) => ({ ...c }));
+      const card = copy[cardIndex];
+      if (!card || card.type !== 'timecard') return prev;
+      const timecard = { ...(card as any) };
+      const days = (timecard.days || []).map((d: any) => ({ ...d }));
+      for (let i = 0; i < days.length; i++) {
+        days[i].morningStart = roundTimeTo5Minutes(days[i].morningStart, mode);
+        days[i].morningEnd = roundTimeTo5Minutes(days[i].morningEnd, mode);
+        days[i].afternoonStart = roundTimeTo5Minutes(days[i].afternoonStart, mode);
+        days[i].afternoonEnd = roundTimeTo5Minutes(days[i].afternoonEnd, mode);
+      }
+      timecard.days = days;
+      copy[cardIndex] = timecard;
+      console.log(`Rounded timecard at index ${cardIndex} with mode=${mode}.`);
+      return copy;
+    });
+  };
+
+  // --- Handler: 指定のtimecardをオリジナルデータにリセット ---
+  const handleResetTimecard = (cardIndex: number) => {
+    if (!originalProcessedData) return;
+    setProcessedData(prev => {
+      const copy = JSON.parse(JSON.stringify(prev));
+      const original = JSON.parse(JSON.stringify(originalProcessedData));
+      if (!original[cardIndex]) return prev;
+      copy[cardIndex] = original[cardIndex];
+      console.log(`Reset timecard at index ${cardIndex} to original values.`);
+      return copy;
+    });
+  };
+
+  // Compact UI mode for denser layout (useful when buttons are cramped)
+  const [isCompactMode, setIsCompactMode] = useState<boolean>(true);
+
+  // Simple toast notification system
+  const [toasts, setToasts] = useState<Array<{ id: string; message: string; type?: 'info'|'success'|'error' }>>([]);
+  const pushToast = (message: string, type: 'info'|'success'|'error' = 'info', timeout = 3000) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, timeout);
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -608,8 +739,7 @@ JSON出力形式の例:
 - add_column_with_data: 新しい列を追加し、データを入力します。params: { "header": "列名", "data": ["セル1", "セル2", ...] }
     - create_journal_entry: 仕訳に必要な列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加し、entries 配列で指定された行に仕訳値を入力します。この操作は通常、AIが勘定科目と金額を推定します。
 - calculate_totals: 指定された数値列の合計を計算し、新しい行として追加します。params: { "columns": ["列名1", "列名2"] }
-- delete_rows: 指定されたインデックスの行を削除します。params: { "row_indices": [0, 2, 3] } または、すべての行を削除する場合は { "all": true }。
-- delete_empty_rows: 空の行をすべて削除します。
+  - delete_rows: 指定されたインデックスの行を削除します。params: { "row_indices": [0, 2, 3] } または、すべての行を削除する場合は { "all": true }。
 `;
 
     try {
@@ -617,6 +747,9 @@ JSON出力形式の例:
       const choices = result?.data?.choices;
       if (!result?.success || !Array.isArray(choices) || choices.length === 0) {
         console.warn('AI API call was not successful or returned no choices.', result);
+        if (result.error && (result.error.includes('429') || result.error.includes('rate-limited'))) {
+            setError("AIアシスタントの無料利用枠の上限に達したため、操作の提案ができませんでした。しばらくしてから再試行してください。");
+        }
         setSuggestedOperations([]);
         return;
       }
@@ -651,6 +784,7 @@ JSON出力形式の例:
     
     let allExtractedData: ProcessedData[] = [];
     let aggregatedUsage = { promptTokens: 0, outputTokens: 0 };
+    const filesWithNoData: string[] = [];
 
     try {
       for (const [index, p] of previews.entries()) {
@@ -723,11 +857,20 @@ JSON出力形式の例:
           // Image file
           console.log(`[handleProcess] Reading image file as array buffer: ${file.name}`);
           const arrayBuffer = await readFileAsArrayBuffer(file);
-          console.log(`[handleProcess] Processing image with Jimp: ${file.name}`);
-          console.log("window.electronAPI in App.tsx before calling processImageForOcr:", window.electronAPI);
-          const { base64, mimeType } = await window.electronAPI.processImageForOcr(arrayBuffer, preprocessingOptions);
-          pagesToProcess.push({ base64, mimeType, name: file.name });
-          console.log(`[handleProcess] Image file processed: ${file.name}`);
+
+          // NEW: Split image if it's too large
+          const imageParts = await window.electronAPI.splitImageIfTooLarge(arrayBuffer);
+          console.log(`[handleProcess] Image was split into ${imageParts.length} part(s).`);
+
+          for (let i = 0; i < imageParts.length; i++) {
+            const partBuffer = imageParts[i];
+            const partName = imageParts.length > 1 ? `${file.name}_part_${i + 1}` : file.name;
+            
+            console.log(`[handleProcess] Processing image part with Jimp: ${partName}`);
+            const { base64, mimeType } = await window.electronAPI.processImageForOcr(partBuffer, preprocessingOptions);
+            pagesToProcess.push({ base64, mimeType, name: partName });
+            console.log(`[handleProcess] Image part processed: ${partName}`);
+          }
         }
 
         if (cancelProcessingRef.current) break;
@@ -745,20 +888,30 @@ JSON出力形式の例:
 
           if (result && Array.isArray(result)) {
             console.log(`[handleProcess] Received ${result.length} data items from Gemini for page ${sourcePage.name}.`);
-            
-            // Associate sourceImageBase64 with each processed item
-            const processedDataWithSource = result.map(item => {
-              // All items in result belong to this sourcePage
-              return { ...item, sourceImageBase64: `data:${sourcePage.mimeType};base64,${sourcePage.base64}` };
-            });
-            allExtractedData.push(...processedDataWithSource);
+            if (result.length === 0) {
+              filesWithNoData.push(sourcePage.name);
+            } else {
+              const processedDataWithSource = result.map(item => {
+                return { ...item, sourceImageBase64: `data:${sourcePage.mimeType};base64,${sourcePage.base64}` };
+              });
+              allExtractedData.push(...processedDataWithSource);
+            }
           } else {
             console.error(`[handleProcess] Gemini processing returned invalid or empty data for page ${sourcePage.name}:`, result);
+            filesWithNoData.push(sourcePage.name); // Also treat invalid data as a failure
           }
         }
       }
 
       setTokenUsage(aggregatedUsage);
+
+      if (filesWithNoData.length > 0) {
+        const errorFiles = [...new Set(filesWithNoData)].join(', ');
+        setError(prevError => {
+            const newError = `以下のファイルまたはページからデータを抽出できませんでした。書類が鮮明であること、または対応する種類であることを確認してください: ${errorFiles}`;
+            return prevError ? `${prevError}\n${newError}` : newError;
+        });
+      }
 
       if (cancelProcessingRef.current) {
         setLoading(false);
@@ -772,10 +925,18 @@ JSON出力形式の例:
           if (item.type === 'timecard') {
             const card = item as ProcessedTimecard;
             if (!card || typeof card !== 'object' || !card.days) return null;
+            let sanitizedDays = Array.isArray(card.days) ? card.days : [];
+            // NOTE: 自動的な欠損日補完は無効化しました。
+            // fillMissingDates を適用すると、OCR が実際に返さなかった（＝空白にしたい）行を
+            // 勝手に挿入してしまうため、空白行が消える／埋まる問題が発生していました。
+            // ここでは元の OCR 出力をそのまま保持します（ユーザーが手動で行を挿入/削除できるようにする方針）。
+            // 以前の実装:
+            // try { sanitizedDays = fillMissingDates(sanitizedDays); } catch (e) { console.warn('fillMissingDates failed', e); }
+            console.log('[sanitization] fillMissingDates disabled: preserving original OCR rows.');
             const sanitizedCard: ProcessedTimecard = {
               type: 'timecard',
               title: { yearMonth: String(card.title?.yearMonth ?? ""), name: String(card.title?.name ?? "") },
-              days: Array.isArray(card.days) ? card.days : [],
+              days: sanitizedDays,
               nameCorrected: card.nameCorrected,
               sourceImageBase64: card.sourceImageBase64,
               rotation: 0
@@ -837,6 +998,8 @@ JSON出力形式の例:
 
       if (!cancelProcessingRef.current) {
         setProcessedData(sanitizedAndValidatedData);
+        // オリジナルデータを保持しておく（リセット用途）
+        setOriginalProcessedData(JSON.parse(JSON.stringify(sanitizedAndValidatedData)));
         if (sanitizedAndValidatedData.length > 0) {
           fetchAiSuggestions(sanitizedAndValidatedData);
         }
@@ -1142,16 +1305,7 @@ JSON出力形式の例:
               }
               break;
           }
-          case 'delete_empty_rows': {
-              const originalRowCount = targetCard.data.length;
-              targetCard.data = targetCard.data.filter((row: string[]) => 
-                  row.some(cell => cell && String(cell).trim() !== '')
-              );
-              if (targetCard.data.length !== originalRowCount) {
-                  updateRequired = true;
-              }
-              break;
-          }
+          
           case 'calculate_totals': {
               if (params.columns && Array.isArray(params.columns) && params.columns.length > 0) {
                   const newTotalRow = new Array(targetCard.headers.length).fill('');
@@ -1337,7 +1491,7 @@ JSON出力形式の例:
     }
   };
 
-const handleAiSendMessage = async (overrideInput?: string) => {
+  const handleAiSendMessage = async (overrideInput?: string) => {
     const inputValue = overrideInput !== undefined ? overrideInput : aiUserInput;
     const trimmedInput = inputValue.trim();
     if (!trimmedInput || !window.electronAPI?.invokeAiChat) return;
@@ -1381,9 +1535,8 @@ ${dataString}
     実行すべき操作を定義したJSONを返します。利用可能な操作は以下の通りです。
     - add_column_with_data: 新しい列を追加し、データを入力します。params: { "header": "列名", "data": ["セル1", "セル2", ...] }
     - delete_rows: 行を削除します。params: { "row_indices": [0, 2, 3] }
-    - calculate_totals: 列の合計を計算します。params: { "columns": ["列名1"] }
-    - delete_empty_rows: 空の行を削除します。
-    - create_journal_entry: 仕訳に必要な列（借方勘定科目、借方金額、貸方勘定科目、貸方金額、摘要）を追加し、entries 配列で指定された行に仕訳値を入力します。entries の各要素は { "rowIndex": 0, "debitAccount": "...", "debitAmount": 0, "creditAccount": "...", "creditAmount": 0, "description": "..." } です。rowIndex を指定できない場合は { "matchColumn": "列名", "matchValue": "値" } で行を特定してください。
+  - calculate_totals: 列の合計を計算します。params: { "columns": ["列名1"] }
+  - create_journal_entry: 仕訳に必要な列（借方勘定科目、借方金額、貸方勘定科目、貸方金額、摘要）を追加し、entries 配列で指定された行に仕訳値を入力します。entries の各要素は { "rowIndex": 0, "debitAccount": "...", "debitAmount": 0, "creditAccount": "...", "creditAmount": 0, "description": "..." } です。rowIndex を指定できない場合は { "matchColumn": "列名", "matchValue": "値" } で行を特定してください。
 
     操作モードのJSON出力例:
     \`\`\`json
@@ -1485,6 +1638,7 @@ const handleDownloadAll = async () => {
                 processedData.filter((d): d is ProcessedTimecard => d.type === 'timecard').forEach((card: ProcessedTimecard) => {
                     const targetSheetName = findMatchingSheetName(card.title.name, tempWb.SheetNames);
                     if (targetSheetName) {
+                        console.debug(`Preparing transform for ${card.title.name}: days=${Array.isArray(card.days) ? card.days.length : 0}`);
                         const transformed = transformTimecardJsonForExcelHandler(card, excelTemplateFile.path, targetSheetName, templateSettings.dataStartCell);
                         allOperations.push(...transformed.operations);
                     } else {
@@ -1654,7 +1808,8 @@ const handleDownloadAll = async () => {
           </div>
           <p className="mt-2 text-sm text-gray-600 leading-relaxed">
             画像(PNG, JPG, PDF)をアップロードすると、AIが内容を読み取りデータ化します。<br />
-            認識結果は画面上で修正し、Excelファイルとしてダウンロード可能です。
+            認識結果は画面上で修正し、Excelファイルとしてダウンロード可能です。<br />
+            高精度な読み取りのため、画像の向きは正しく、タイムカードは画像1枚につき1つにしてください。
           </p>
         </header>
 
@@ -1702,6 +1857,14 @@ const handleDownloadAll = async () => {
                                     <label htmlFor="isAutocropEnabled" className="font-medium text-gray-900">余白の自動トリミング</label>
                                     <p className="text-gray-500">画像の不要な余白を自動で除去し、OCRの認識範囲を最適化します。</p>
                                 </div>
+                                    {/* Toast container */}
+                                <div aria-live="polite" className="fixed right-4 bottom-4 z-60 flex flex-col items-end space-y-2">
+                                      {toasts.map(t => (
+                                        <div key={t.id} className={`max-w-xs w-full px-3 py-2 rounded-md shadow-md text-sm text-white ${t.type === 'success' ? 'bg-green-600' : t.type === 'error' ? 'bg-red-600' : 'bg-gray-800'}`}>
+                                          {t.message}
+                                        </div>
+                                      ))}
+                                    </div>
                             </div>
                             <div className="relative flex items-start">
                                 <div className="flex h-6 items-center">
@@ -1928,10 +2091,34 @@ const handleDownloadAll = async () => {
                                                     テンプレートに転記
                                                 </button>
                                             ) : (
-                                                <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
-                                                    <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
-                                                    新規Excelでダウンロード
-                                                </button>
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => handleDownloadSingle(item)} className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 flex-shrink-0" aria-label={`${item.title.name}のタイムカードを新規Excelでダウンロード`}>
+                            <DownloadIcon className="-ml-0.5 mr-2 h-4 w-4" />
+                            新規Excelでダウンロード
+                          </button>
+
+                          <div className="flex items-center gap-2 bg-transparent">
+                            <button title="分を切り上げ" onClick={() => { handleRoundTimecard(index, 'up'); pushToast('切上げを適用しました', 'success'); }} className={`inline-flex items-center gap-2 ${isCompactMode ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm ring-1 ring-blue-800`} aria-label="切り上げ">
+                              <ArrowUpIcon className="w-4 h-4" />
+                              <span className="whitespace-nowrap">切上げ</span>
+                            </button>
+
+                            <button title="分を切り捨て" onClick={() => { handleRoundTimecard(index, 'down'); pushToast('切下げを適用しました', 'success'); }} className={`inline-flex items-center gap-2 ${isCompactMode ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm ring-1 ring-blue-800`} aria-label="切り捨て">
+                              <ArrowDownIcon className="w-4 h-4" />
+                              <span className="whitespace-nowrap">切下げ</span>
+                            </button>
+
+                            <button title="四捨五入" onClick={() => { handleRoundTimecard(index, 'nearest'); pushToast('四捨五入を適用しました', 'success'); }} className={`inline-flex items-center gap-2 ${isCompactMode ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm ring-1 ring-blue-800`} aria-label="四捨五入">
+                              <AdjustmentsHorizontalIcon className="w-4 h-4" />
+                              <span className="whitespace-nowrap">四捨五入</span>
+                            </button>
+
+                            <button title="元に戻す" onClick={() => { handleResetTimecard(index); pushToast('元に戻しました', 'info'); }} className={`inline-flex items-center gap-2 ${isCompactMode ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'} bg-red-600 hover:bg-red-700 text-white font-semibold rounded-md shadow-md ring-2 ring-red-800`} aria-label="リセット">
+                              <UndoIcon className="w-4 h-4" />
+                              <span className="whitespace-nowrap">リセット</span>
+                            </button>
+                          </div>
+                        </div>
                                             )}
                                         </div>
                                     </div>

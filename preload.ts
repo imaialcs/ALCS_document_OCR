@@ -44,7 +44,8 @@ try {
   // --- Context Menu API ---
   showContextMenu: () => ipcRenderer.send('show-context-menu'),
 
-  setMenu: (template: any[]) => ipcRenderer.invoke('set-menu', template)
+  setMenu: (template: any[]) => ipcRenderer.invoke('set-menu', template),
+  splitImageIfTooLarge: (imageBuffer: ArrayBuffer) => ipcRenderer.invoke('split-image-if-too-large', imageBuffer)
   });
 } catch (error) {
   console.error("Error exposing electronAPI in preload:", error);

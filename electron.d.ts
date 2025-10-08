@@ -20,6 +20,7 @@ declare global {
       onShowUpdateNotification: (callback: () => void) => () => void;
       restartApp: () => void;
       showContextMenu: () => void;
+      splitImageIfTooLarge: (imageBuffer: ArrayBuffer) => Promise<ArrayBuffer[]>;
     };
   }
 }

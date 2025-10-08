@@ -153,6 +153,18 @@ export const transformTimecardJsonForExcelHandler = (timecardJson: any, template
     day.afternoonEnd || '',
   ]);
 
+  // Sanity check: ensure we preserved the same number of rows as input days
+  try {
+    const inputDays = Array.isArray(timecardJson.days) ? timecardJson.days.length : -1;
+    if (inputDays !== -1 && dayData.length !== inputDays) {
+      console.warn(`transformTimecardJsonForExcelHandler: row count mismatch: inputDays=${inputDays}, dayData=${dayData.length}`);
+    } else {
+      console.debug(`transformTimecardJsonForExcelHandler: prepared ${dayData.length} rows (including empty rows).`);
+    }
+  } catch (e) {
+    console.warn('transformTimecardJsonForExcelHandler: sanity check failed', e);
+  }
+
   // Define the operations for the excel_handler.
   // ユーザーが指定した開始セルから勤怠データのみを書き込む
   const operations = [
