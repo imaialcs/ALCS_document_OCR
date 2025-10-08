@@ -613,7 +613,7 @@ JSON出力形式の例:
 
     try {
       const result = await window.electronAPI.invokeAiChat({ prompt });
-      if (result.success && result.data.choices && result.data.choices[0]) {
+      if (result.success && result.data && result.data.choices && result.data.choices[0]) {
         const responseText = result.data.choices[0].message.content;
         const parsed = extractJson(responseText);
         if (parsed && parsed.operations && Array.isArray(parsed.operations)) {
