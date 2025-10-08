@@ -47,3 +47,10 @@ npm install
 - v1.2.4 (2025-10-03): Expanded the AI assistant input area to full width, switched the send button to a paper airplane icon, and improved the dev startup script to follow Vite port changes.
 
 - v1.2.5 (2025-10-06): Updated chat alignment for clearer sender separation, added AI typing indicator, and reduced input controls to a more compact default size.
+
+- v1.2.10 (2025-10-08): 安定性向上のためのロールバックと修正。
+    - ベースバージョンをv1.2.5に戻し、その後の不安定な変更を破棄しました。
+    - AIアシスタントのモデルをOpenRouterの'deepseek/deepseek-chat-v3.1:free'に変更しました。
+    - OCR機能のAPIキー参照エラーを修正しました。
+    - 開発モードでのExcel転記機能の不具合を修正しました。
+    - 起動時のTypeScriptエラーを修正しました。
