@@ -228,7 +228,7 @@ const setupIpcHandlers = () => {
         const docType = {'領収書':'receipt','日計表':'daily balance sheet','銀行通帳':'bank passbook','その他（汎用テーブル）':'generic table','タイムカード':'timecard'}[documentType] || 'document';
         let pTemplate = prompts[documentType] || prompts.default;
         let prompt = pTemplate.replace('{pagePosition}', pagePos).replace('{friendlyDocName}', docType);
-        const model = genAI.getGenerativeModel({ model: "gemini-flash-lite-latest" });
+        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
         const result = await model.generateContent([{ inlineData: { data: page.base64, mimeType: page.mimeType } }, { text: prompt }], generationConfig);
         const response = await result.response;
         const text = response.text();
