@@ -225,7 +225,7 @@ const validateData = (data) => {
 
 // Gemini OCR
 ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY_OCR;
   if (!apiKey) {
     throw new Error('APIキーが.envファイルに設定されていません。');
   }
