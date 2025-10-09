@@ -64,8 +64,6 @@ npm run dist
 - alcs
 
 ## Changelog
-- v1.2.5 (2025-10-06): Updated chat alignment for clearer sender separation, added AI typing indicator, and reduced input controls to a more compact default size.
-
 - v1.2.10 (2025-10-08): 安定性向上のためのロールバックと修正。
     - ベースバージョンをv1.2.5に戻し、その後の不安定な変更を破棄しました。
     - AIアシスタントのモデルをOpenRouterの'deepseek/deepseek-chat-v3.1:free'に変更しました。
