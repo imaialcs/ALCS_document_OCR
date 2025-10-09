@@ -266,10 +266,9 @@ ipcMain.handle('invoke-gemini-ocr', async (event, pages, documentType) => {
           break;
         case 'タイムカード':
         default:
-          prompt = `画像から情報を抽出し、JSON形式で出力してください。画像が勤怠管理表やタイムカードの場合、timecard形式で出力: {"type":"timecard", "title":{"yearMonth":"YYYY年MM月", "name":"氏名"}, "days":[{"date":"D", "dayOfWeek":"ddd", "morningStart":"HH:mm", "morningEnd":"HH:mm", "afternoonStart":"HH:mm", "afternoonEnd":"HH:mm"}]}。timecardの時間は、出勤・退勤のペアがない場合nullにしてください。画像が請求書や明細書などの表形式データの場合、table形式で出力: {"type":"table", "title":{"yearMonth":"YYYY年MM月", "name":"件名や宛名"}, "headers":["ヘッダー1", "ヘッダー2", "..."], "data":[["行1セル1", "..."], ["行2セル1", "..."]]}。上記いずれにも該当しない場合は、transcription形式で出力: {"type":"transcription", "fileName":"元のファイル名", "content":"文字起こし結果"}。氏名や件名が読み取れない場合は、"不明"としてください。`;
+          prompt = `画像から情報を抽出し、JSON形式で出力してください。\n\n**重要**: この画像は、元々複数のタイムカードが横に並んだ大きな画像を、個々のタイムカードの領域に分割したものである可能性があります。そのため、各画像は独立したタイムカードである可能性が高いです。\n\n**厳格なルール**: 各タイムカードは、そのカード上部に記載されている特定の人物にのみ関連付けられます。ある人物のタイムカードから読み取った時間や日付の情報を、隣接する別の人物のタイムカードの情報と**絶対に混同しないでください**。各カードの物理的な境界を**極めて明確に認識し**、それぞれのカード内のデータのみを抽出してください。氏名が読み取れた場合は、その氏名に紐づく情報のみを抽出してください。\n\n出力形式:\n- 画像が勤怠管理表やタイムカードの場合、timecard形式で出力: {"type":"timecard", "title":{"yearMonth":"YYYY年MM月", "name":"氏名"}, "days":[{"date":"D", "dayOfWeek":"ddd", "morningStart":"HH:mm", "morningEnd":"HH:mm", "afternoonStart":"HH:mm", "afternoonEnd":"HH:mm"}]}。timecardの時間は、出勤・退勤のペアがない場合nullにしてください。\n- 画像が請求書や明細書などの表形式データの場合、table形式で出力: {"type":"table", "title":{"yearMonth":"YYYY年MM月", "name":"件名や宛名"}, "headers":["ヘッダー1", "ヘッダー2", "..."], "data":[["行1セル1", "..."], ["行2セル1", "..."]]}。\n- 上記いずれにも該当しない場合は、transcription形式で出力: {"type":"transcription", "fileName":"元のファイル名", "content":"文字起こし結果"}。\n\n氏名や件名が読み取れない場合は、"不明"としてください。`;
           break;
       }
-
       const imagePart = {
         inlineData: {
           data: page.base64,
@@ -430,22 +429,55 @@ ipcMain.handle('invoke-ai-chat', async (_event, payload) => {
 const processImageWithJimp = async (arrayBuffer, options) => {
   try {
     const image = await Jimp.read(Buffer.from(arrayBuffer));
+
+    // EXIF-based auto-rotation
+    if (image._exif && image._exif.tags && image._exif.tags.Orientation) {
+      const orientation = image._exif.tags.Orientation;
+      log.info(`Image EXIF Orientation found: ${orientation}`);
+      switch (orientation) {
+        case 2: image.mirror(true, false); break;
+        case 3: image.rotate(180); break;
+        case 4: image.mirror(false, true); break;
+        case 5: image.rotate(90).mirror(true, false); break;
+        case 6: image.rotate(90); break;
+        case 7: image.rotate(270).mirror(true, false); break;
+        case 8: image.rotate(270); break;
+      }
+    }
+
+    const width = image.getWidth();
+    const height = image.getHeight();
+    const imagesToProcess = [];
+
+    // Heuristic to detect and split multiple horizontal documents
+    if (width > height * 1.8) {
+      log.info(`Wide image detected (width: ${width}, height: ${height}). Splitting into 3 parts.`);
+      const partWidth = Math.floor(width / 3);
+      for (let i = 0; i < 3; i++) {
+        imagesToProcess.push(image.clone().crop(i * partWidth, 0, partWidth, height));
+      }
+    } else {
+      imagesToProcess.push(image);
+    }
+
+    const processedImages = [];
+    for (const img of imagesToProcess) {
+      if (options.isAutocropEnabled) {
+        img.autocrop();
+      }
+      if (options.isContrastAdjustmentEnabled) {
+        img.contrast(0.2);
+      }
+      img.scaleToFit(1200, 1200);
+      img.quality(85);
+
+      const mimeType = Jimp.MIME_JPEG;
+      const base64 = await img.getBase64Async(mimeType);
+      processedImages.push({ base64: base64.split(',')[1], mimeType });
+    }
     
-    if (options.isAutocropEnabled) {
-      image.autocrop();
-    }
-
-    if (options.isContrastAdjustmentEnabled) {
-      image.contrast(0.2);
-    }
-
-    image.scaleToFit(1200, 1200);
-    image.quality(85);
-
-    const mimeType = Jimp.MIME_JPEG;
-    const base64 = await image.getBase64Async(mimeType);
-
-    return { base64: base64.split(',')[1], mimeType };
+    log.info(`Image processing resulted in ${processedImages.length} image(s).`);
+    return processedImages;
 
   } catch (error) {
     log.error("Error processing image with Jimp in main process:", error);
