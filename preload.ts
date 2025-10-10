@@ -45,7 +45,7 @@ try {
   showContextMenu: () => ipcRenderer.send('show-context-menu'),
 
   // --- Temporary File Management API ---
-  cacheTempFile: (data: string) => ipcRenderer.invoke('cache-temp-file', data),
+  cacheTempFile: (fileName: string, data: ArrayBuffer) => ipcRenderer.invoke('cache-temp-file', fileName, data),
   deleteTempFile: (filePath: string) => ipcRenderer.invoke('delete-temp-file', filePath),
 
   setMenu: (template: any[]) => ipcRenderer.invoke('set-menu', template)

@@ -340,7 +340,10 @@ const App = () => {
       }
       try {
         const byteArray = Array.from(new Uint8Array(buffer));
-        const result = await window.electronAPI.cacheTempFile(JSON.stringify({ name, data: byteArray, purpose }));
+        const result = await window.electronAPI.cacheTempFile(
+          `${name}.json`,
+          new TextEncoder().encode(JSON.stringify({ name, data: byteArray, purpose })).buffer
+        );
         if (result?.success && result.path) {
           return { path: result.path, fromCache: true };
         }
@@ -593,12 +596,38 @@ const App = () => {
       setError('名簿ファイルには .xlsx/.xlsm/.xls のいずれかのファイルを指定してください。');
       return;
     }
-    const filePath = (file as any)?.path;
+
+    let filePath = (file as any)?.path;
+    let fromCache = false;
+
     if (!filePath) {
+      // ファイルパスがない場合（ブラウザのファイル選択など）、一時ファイルとしてキャッシュする
+      try {
+        const arrayBuffer = await readFileAsArrayBuffer(file);
+        // cacheTempFile の引数を [ファイル名, ArrayBuffer] に変更
+        const result = await window.electronAPI.cacheTempFile(file.name, arrayBuffer);
+        
+        if (result?.success && result.path) {
+          filePath = result.path;
+          fromCache = true;
+        } else {
+          setError(result?.error ?? '名簿ファイルの一時保存に失敗しました。');
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to cache roster file:', e);
+        setError('名簿ファイルの内容を読み込めませんでした。');
+        return;
+      }
+    }
+
+    if (!filePath) {
+      // ここまで来ても filePath がない場合はエラー
       setError('ドロップされたファイルのパスを取得できませんでした。エクスプローラーから直接ドラッグ＆ドロップするか、クリックしてファイルを選択してください。');
       return;
     }
-    setRosterFile({ name: file.name, path: filePath });
+
+    setRosterFile({ name: file.name, path: filePath, fromCache });
     setError(null);
   };
 
@@ -647,14 +676,10 @@ const App = () => {
     }
 
     const filePath = (file as any)?.path;
-    if (!filePath) {
-      setError('ドロップされたファイルのパスを取得できませんでした。エクスプローラーから直接ドラッグ＆ドロップするか、クリックしてファイルを選択してください。');
-      return;
-    }
 
     try {
       const arrayBuffer = await readFileAsArrayBuffer(file);
-      applyTemplateFile(file.name, filePath, arrayBuffer);
+      applyTemplateFile(file.name, filePath || null, arrayBuffer);
     } catch (e) {
       console.error('Failed to read dropped template file:', e);
       const errorMessage = e instanceof Error ? e.message : String(e);

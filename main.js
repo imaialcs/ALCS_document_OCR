@@ -786,12 +786,15 @@ ipcMain.handle('read-roster-file', async (event, { filePath, sheetName, column, 
 });
 
 // --- Temporary File Management API ---
-ipcMain.handle('cache-temp-file', async (event, data) => {
+ipcMain.handle('cache-temp-file', async (event, fileName, data) => {
   const tempDir = app.getPath('temp');
-  const tempFileName = `${uuidv4()}.json`;
+  const fileExtension = path.extname(fileName) || '.bin'; // 拡張子がない場合は .bin を使用
+  const tempFileName = `${uuidv4()}${fileExtension}`;
   const tempFilePath = path.join(tempDir, tempFileName);
   try {
-    await fs.promises.writeFile(tempFilePath, data, 'utf8');
+    // ArrayBufferをBufferに変換してバイナリファイルとして書き込む
+    const bufferData = Buffer.from(data);
+    await fs.promises.writeFile(tempFilePath, bufferData);
     log.info(`Cached temp file at: ${tempFilePath}`);
     return { success: true, path: tempFilePath };
   } catch (error) {

@@ -20,7 +20,7 @@ declare global {
       onShowUpdateNotification: (callback: () => void) => () => void;
       restartApp: () => void;
       showContextMenu: () => void;
-      cacheTempFile: (data: string) => Promise<{ success: boolean; path?: string; error?: string; }>;
+      cacheTempFile: (fileName: string, data: ArrayBuffer) => Promise<{ success: boolean; path?: string; error?: string; }>;
       deleteTempFile: (filePath: string) => Promise<{ success: boolean; error?: string; }>;
     };
   }
