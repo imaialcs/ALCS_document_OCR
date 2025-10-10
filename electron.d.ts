@@ -9,7 +9,7 @@ declare global {
       invokeGrok: (payload: { prompt: string }) => Promise<{ success: boolean; data?: { choices: { message: { content: string } }[] }; error?: string }>;
       invokeAiChat: (payload: { prompt: string }) => Promise<{ success: boolean; data?: { choices: { message: { content: string } }[] }; error?: string }>;
 
-      processImageForOcr: (arrayBuffer: ArrayBuffer, options: { isAutocropEnabled: boolean, isContrastAdjustmentEnabled: boolean }) => Promise<{ base64: string; mimeType: string }>;
+      processImageForOcr: (arrayBuffer: ArrayBuffer, options: { isAutocropEnabled: boolean, isContrastAdjustmentEnabled: boolean }) => Promise<{ base64: string; mimeType: string }[]>;
       saveFile: (options: any, data: Uint8Array) => Promise<{ success: boolean; path?: string; error?: string; canceled?: boolean; }>;
       runPythonScript: (options: any) => Promise<{ success: boolean; message?: string; error?: string; }>;
       openTemplateFile: () => Promise<{ success: boolean; path?: string; name?: string; data?: any; error?: string; canceled?: boolean; }>;
@@ -20,6 +20,8 @@ declare global {
       onShowUpdateNotification: (callback: () => void) => () => void;
       restartApp: () => void;
       showContextMenu: () => void;
+      cacheTempFile: (data: string) => Promise<{ success: boolean; path?: string; error?: string; }>;
+      deleteTempFile: (filePath: string) => Promise<{ success: boolean; error?: string; }>;
     };
   }
 }

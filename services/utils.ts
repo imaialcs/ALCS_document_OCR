@@ -143,7 +143,7 @@ export async function withRetry<T>(
  * @param sheetName The name of the sheet to write to.
  * @returns The JSON object formatted for the excel_handler.exe.
  */
-export const transformTimecardJsonForExcelHandler = (timecardJson: any, templatePath: string, sheetName: string, dataStartCell: string): any => {
+export const transformTimecardJsonForExcelHandler = (timecardJson: any, templatePath: string, sheetName: string, dataStartCell: string, includeSpacerColumn: boolean): any => {
   // Extract main data and convert it to a 2D array for the Excel sheet.
   // Null values are converted to empty strings.
   const dayData = timecardJson.days.map((day: any) => [

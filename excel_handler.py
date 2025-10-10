@@ -143,7 +143,7 @@ def process_with_openpyxl(template_path, operations):
         for op in operations:
             sheet_name = op.get("sheet_name")
             data = op.get("data")
-            start_cell = op.get("start_cell")
+            start_cell = op.get("start_cell", "E6")
             column_offsets = op.get("column_offsets", [])
 
             if not all([sheet_name, data, start_cell]):
@@ -198,8 +198,8 @@ if __name__ == "__main__":
 
         if action == "read_roster":
             file_path = input_data.get("file_path")
-            sheet_name = input_data.get("sheet_name")
-            column = input_data.get("column")
+            sheet_name = input_data.get("sheet_name", "リスト")
+            column = input_data.get("column", "D")
             has_header = input_data.get("has_header", False) # has_headerを追加
             if not all([file_path, column]):
                 raise ValueError("Missing required parameters for read_roster action.")

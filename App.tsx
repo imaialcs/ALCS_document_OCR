@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
+﻿import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { processDocumentPages } from './services/geminiService';
 import { ProcessedData, ProcessedTable, ProcessedText, FilePreview, ProcessedTimecard, TimecardDay, SuggestedOperation, ChatMessage } from './types';
 import { withRetry, transformTimecardJsonForExcelHandler, readFileAsArrayBuffer } from './services/utils';
@@ -271,6 +271,8 @@ const extractJson = (text: string): any | null => {
   return null;
 };
 
+const timecardHeaders = ['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤'];
+
 const App = () => {
   const [previews, setPreviews] = useState<FilePreview[]>([]);
   const [processedData, setProcessedData] = useState<ProcessedData[]>([]);
@@ -281,6 +283,8 @@ const App = () => {
   const [modalPreview, setModalPreview] = useState<FilePreview | null>(null);
   const [hasScrolledToResults, setHasScrolledToResults] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const templateFileInputRef = useRef<HTMLInputElement | null>(null);
+  const rosterFileInputRef = useRef<HTMLInputElement | null>(null);
   const [tokenUsage, setTokenUsage] = useState<{ promptTokens: number, outputTokens: number } | null>(null);
   
   const [updateStatus, setUpdateStatus] = useState<{ message: string; ready?: boolean; transient?: boolean } | null>(null);
@@ -288,13 +292,69 @@ const App = () => {
 
   const [documentType, setDocumentType] = useState('タイムカード');
   const [roster, setRoster] = useState<string[]>([]);
-  const [rosterFile, setRosterFile] = useState<{ name: string; path: string } | null>(null);
-  const [rosterSettings, setRosterSettings] = useState({ sheetName: '', column: 'A' });
+  const [rosterFile, setRosterFile] = useState<{ name: string; path: string | null; fromCache?: boolean } | null>(null);
+  const [rosterSettings, setRosterSettings] = useState({ sheetName: 'リスト', column: 'D' });
   const [preprocessingOptions, setPreprocessingOptions] = useState({ isAutocropEnabled: true, isContrastAdjustmentEnabled: true });
-  const [excelTemplateFile, setExcelTemplateFile] = useState<{ name: string, path: string } | null>(null);
+  const [excelTemplateFile, setExcelTemplateFile] = useState<{ name: string; path: string | null; fromCache?: boolean } | null>(null);
   const [excelTemplateData, setExcelTemplateData] = useState<ArrayBuffer | null>(null);
   const [outputMode, setOutputMode] = useState<'new' | 'template'>('new');
-  const [templateSettings, setTemplateSettings] = useState({ dataStartCell: 'A1' });
+  const [templateSettings, setTemplateSettings] = useState({ dataStartCell: 'E6', sheetName: '' });
+  const [isTemplateDragOver, setIsTemplateDragOver] = useState(false);
+  const [isRosterDragOver, setIsRosterDragOver] = useState(false);
+
+  const deleteTempFile = useCallback(async (filePath?: string | null) => {
+    if (!filePath || !window.electronAPI?.deleteTempFile) return;
+    try {
+      await window.electronAPI.deleteTempFile(filePath);
+    } catch (e) {
+      console.warn('Failed to delete temp file', filePath, e);
+    }
+  }, []);
+
+  const cacheFileIfNeeded = useCallback(
+    async (name: string, buffer: ArrayBuffer | null, purpose: 'template' | 'roster'): Promise<{ path: string | null; fromCache: boolean }> => {
+      if (!buffer) {
+        return { path: null, fromCache: false };
+      }
+      if (!window.electronAPI?.cacheTempFile) {
+        const label = purpose === 'template' ? 'テンプレート' : '名簿';
+        setError(`${label}ファイルをドラッグ＆ドロップで読み込むにはElectron環境が必要です。クリックしてファイルを選択してください。`);
+
+  const clearRosterFile = useCallback(async () => {
+    if (rosterFile?.fromCache && rosterFile.path) {
+      await deleteTempFile(rosterFile.path);
+    }
+    setRosterFile(null);
+    setRoster([]);
+  }, [deleteTempFile, rosterFile]);
+
+  // const handleClearTemplateFile = useCallback(async () => {
+  //   if (excelTemplateFile?.fromCache && excelTemplateFile.path) {
+  //     await deleteTempFile(excelTemplateFile.path);
+  //   }
+  //   setExcelTemplateFile(null);
+  //   setExcelTemplateData(null);
+  // }, [deleteTempFile, excelTemplateFile]);
+
+        return { path: null, fromCache: false };
+      }
+      try {
+        const byteArray = Array.from(new Uint8Array(buffer));
+        const result = await window.electronAPI.cacheTempFile(JSON.stringify({ name, data: byteArray, purpose }));
+        if (result?.success && result.path) {
+          return { path: result.path, fromCache: true };
+        }
+        const label = purpose === 'template' ? 'テンプレート' : '名簿';
+        setError(result?.error ?? `${label}ファイルの一時保存に失敗しました。`);
+        return { path: null, fromCache: false };
+      } catch (e: any) {
+        const label = purpose === 'template' ? 'テンプレート' : '名簿';
+        setError(`${label}ファイルの一時保存に失敗しました: ${e?.message ?? e}`);
+        return { path: null, fromCache: false };
+      }
+    },
+    []
+  );
 
   // --- AI関連のState ---
   const [aiMessages, setAiMessages] = useState<ChatMessage[]>([]);
@@ -302,6 +362,23 @@ const App = () => {
   const [suggestedOperations, setSuggestedOperations] = useState<SuggestedOperation[]>([]);
   const [isSuggestionLoading, setIsSuggestionLoading] = useState(false);
   const [isAiManualLoading, setIsAiManualLoading] = useState(false);
+  const [cardColumnVisibility, setCardColumnVisibility] = useState<{ [cardIndex: number]: { [colIndex: number]: boolean } }>({});
+
+  useEffect(() => {
+    return () => {
+      if (rosterFile?.fromCache && rosterFile.path) {
+        void deleteTempFile(rosterFile.path);
+      }
+    };
+  }, [rosterFile, deleteTempFile]);
+
+  useEffect(() => {
+    return () => {
+      if (excelTemplateFile?.fromCache && excelTemplateFile.path) {
+        void deleteTempFile(excelTemplateFile.path);
+      }
+    };
+  }, [excelTemplateFile, deleteTempFile]);
 
   useEffect(() => {
     return () => {
@@ -501,20 +578,120 @@ const App = () => {
   };
 
   const handleRosterUpload = async () => {
-    console.log('handleRosterUpload called');
     if (!window.electronAPI) return;
-
     const openResult = await window.electronAPI.openRosterFile();
-    console.log('openRosterFile result:', openResult);
-    if (!openResult.success || !openResult.path) {
-      if (!openResult.canceled) {
-        setError('名簿ファイルの選択がキャンセルされました。');
-      }
-      return;
+    if (openResult.success && openResult.path && openResult.name) {
+      setRosterFile({ name: openResult.name, path: openResult.path });
+    } else if (!openResult.canceled) {
+      setError('名簿ファイルの選択に失敗しました。');
     }
-    setRosterFile({ name: openResult.name || '', path: openResult.path });
   };
 
+  const loadRosterFromBrowserFile = async (file: File) => {
+    const extension = file.name.toLowerCase();
+    if (!extension.match(/\.(xlsx|xlsm|xls)$/)) {
+      setError('名簿ファイルには .xlsx/.xlsm/.xls のいずれかのファイルを指定してください。');
+      return;
+    }
+    const filePath = (file as any)?.path;
+    if (!filePath) {
+      setError('ドロップされたファイルのパスを取得できませんでした。エクスプローラーから直接ドラッグ＆ドロップするか、クリックしてファイルを選択してください。');
+      return;
+    }
+    setRosterFile({ name: file.name, path: filePath });
+    setError(null);
+  };
+
+  const handleRosterInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await loadRosterFromBrowserFile(file);
+    event.target.value = '';
+  };
+
+  const handleRosterDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsRosterDragOver(true);
+  };
+
+  const handleRosterDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+    setIsRosterDragOver(false);
+  };
+
+  const handleRosterDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsRosterDragOver(false);
+    const file = event.dataTransfer?.files?.[0];
+    if (file) {
+      await loadRosterFromBrowserFile(file);
+    }
+  };
+
+
+  const applyTemplateFile = (name: string, path: string, buffer: ArrayBuffer) => {
+    setExcelTemplateFile({ name, path });
+    setExcelTemplateData(buffer);
+    setError(null);
+    if (templateFileInputRef.current) {
+      templateFileInputRef.current.value = '';
+    }
+  };
+
+  const loadTemplateFromBrowserFile = async (file: File) => {
+    const extension = file.name.toLowerCase();
+    if (!extension.match(/\.(xlsx|xlsm|xls)$/)) {
+      setError('Excelテンプレートには .xlsx/.xlsm/.xls のいずれかのファイルを指定してください。');
+      return;
+    }
+
+    const filePath = (file as any)?.path;
+    if (!filePath) {
+      setError('ドロップされたファイルのパスを取得できませんでした。エクスプローラーから直接ドラッグ＆ドロップするか、クリックしてファイルを選択してください。');
+      return;
+    }
+
+    try {
+      const arrayBuffer = await readFileAsArrayBuffer(file);
+      applyTemplateFile(file.name, filePath, arrayBuffer);
+    } catch (e) {
+      console.error('Failed to read dropped template file:', e);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      setError(`テンプレートファイルの読み込みに失敗しました: ${errorMessage}`);
+    }
+  };
+
+  const handleTemplateInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    await loadTemplateFromBrowserFile(file);
+    event.target.value = '';
+  };
+
+  const handleTemplateDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsTemplateDragOver(true);
+  };
+
+  const handleTemplateDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (event.currentTarget.contains(event.relatedTarget as Node)) {
+      return;
+    }
+    setIsTemplateDragOver(false);
+  };
+
+  const handleTemplateDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsTemplateDragOver(false);
+    const file = event.dataTransfer?.files?.[0];
+    if (file) {
+      await loadTemplateFromBrowserFile(file);
+    }
+  };
 
   const handleTemplateSelect = async () => {
     console.log('handleTemplateSelect called');
@@ -524,14 +701,9 @@ const App = () => {
     if (result.success) {
       if (result.path && result.data && result.name) {
         try {
-          setExcelTemplateFile({ name: result.name, path: result.path });
-          
           const uint8Array = new Uint8Array(result.data);
-          
           const arrayBuffer = uint8Array.slice().buffer;
-
-          setExcelTemplateData(arrayBuffer);
-          setError(null);
+          applyTemplateFile(result.name, result.path, arrayBuffer);
         } catch (e) {
           console.error("Failed to process template file data:", e);
           const errorMessage = e instanceof Error ? e.message : String(e);
@@ -605,7 +777,7 @@ JSON出力形式の例:
 
 利用可能な操作タイプ ("operation"):
 - add_column_with_data: 新しい列を追加し、データを入力します。params: { "header": "列名", "data": ["セル1", "セル2", ...] }
-- create_journal_entry: 仕訳に必要な列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加します。この操作は通常、データ入力は伴いません。
+- create_journal_entry: 仕訳に必要な列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加し、データも入力します。params: { "journal_entries": [ {"借方勘定科目": "...", "借方金額": "...", "貸方勘定科目": "...", "貸方金額": "...", "摘要": "..."}, ... ] }。journal_entries 配列は対象テーブルの各行と同じ順序・件数で揃えてください。
 - calculate_totals: 指定された数値列の合計を計算し、新しい行として追加します。params: { "columns": ["列名1", "列名2"] }
 - delete_rows: 指定されたインデックスの行を削除します。params: { "row_indices": [0, 2, 3] } または、すべての行を削除する場合は { "all": true }。
 - delete_empty_rows: 空の行をすべて削除します。
@@ -708,8 +880,13 @@ JSON出力形式の例:
                 }, 'image/jpeg', 0.95);
               });
 
-              const { base64, mimeType } = await window.electronAPI.processImageForOcr(canvasBuffer, preprocessingOptions);
-              pagesToProcess.push({ base64, mimeType, name: `${file.name}_page_${i}` });
+              const processedImages = await window.electronAPI.processImageForOcr(canvasBuffer, preprocessingOptions);
+              processedImages.forEach((img, j) => {
+                const newName = processedImages.length > 1
+                  ? `${file.name}_page_${i}_part_${j + 1}`
+                  : `${file.name}_page_${i}`;
+                pagesToProcess.push({ base64: img.base64, mimeType: img.mimeType, name: newName });
+              });
             }
           } catch (pdfError) {
             console.error(`[handleProcess] Error processing PDF file ${p.name}:`, pdfError);
@@ -721,10 +898,15 @@ JSON出力形式の例:
           console.log(`[handleProcess] Reading image file as array buffer: ${file.name}`);
           const arrayBuffer = await readFileAsArrayBuffer(file);
           console.log(`[handleProcess] Processing image with Jimp: ${file.name}`);
-          console.log("window.electronAPI in App.tsx before calling processImageForOcr:", window.electronAPI);
-          const { base64, mimeType } = await window.electronAPI.processImageForOcr(arrayBuffer, preprocessingOptions);
-          pagesToProcess.push({ base64, mimeType, name: file.name });
-          console.log(`[handleProcess] Image file processed: ${file.name}`);
+          const processedImages = await window.electronAPI.processImageForOcr(arrayBuffer, preprocessingOptions);
+          
+          // The main process now returns an array of images
+          processedImages.forEach((img: { base64: string, mimeType: string }, i: number) => {
+            const newName = processedImages.length > 1 ? `${file.name}_part_${i + 1}` : file.name;
+            pagesToProcess.push({ base64: img.base64, mimeType: img.mimeType, name: newName });
+          });
+
+          console.log(`[handleProcess] Image file processed into ${processedImages.length} part(s): ${file.name}`);
         }
 
         if (cancelProcessingRef.current) break;
@@ -1172,17 +1354,44 @@ JSON出力形式の例:
           }
           case 'create_journal_entry': {
               const newHeaders = ['借方勘定科目', '借方金額', '貸方勘定科目', '貸方金額', '摘要'];
-              newHeaders.forEach(h => {
-                  if (!targetCard.headers.includes(h)) {
-                      targetCard.headers.push(h);
+              newHeaders.forEach(header => {
+                  if (!targetCard.headers.includes(header)) {
+                      targetCard.headers.push(header);
                       updateRequired = true;
                   }
               });
-              targetCard.data.forEach((row: string[]) => {
+
+              const headerIndices: Record<string, number> = {};
+              newHeaders.forEach(header => {
+                  const index = targetCard.headers.indexOf(header);
+                  if (index !== -1) {
+                      headerIndices[header] = index;
+                  }
+              });
+
+              const journalEntries = Array.isArray(params?.journal_entries) ? params.journal_entries : null;
+
+              targetCard.data.forEach((row: string[], rowIndex: number) => {
                   while (row.length < targetCard.headers.length) {
                       row.push('');
                   }
+
+                  const entry = journalEntries && journalEntries[rowIndex];
+                  if (entry && typeof entry === 'object') {
+                      newHeaders.forEach(header => {
+                          const idx = headerIndices[header];
+                          if (typeof idx === 'number') {
+                              const value = entry[header];
+                              row[idx] = value === undefined || value === null ? '' : String(value);
+                          }
+                      });
+                      updateRequired = true;
+                  }
               });
+
+              if (!journalEntries) {
+                  console.warn('create_journal_entry was executed without journal_entries data.', params);
+              }
               break;
           }
           default:
@@ -1250,7 +1459,7 @@ ${dataString}
     - delete_rows: 行を削除します。params: { "row_indices": [0, 2, 3] }
     - calculate_totals: 列の合計を計算します。params: { "columns": ["列名1"] }
     - delete_empty_rows: 空の行を削除します。
-    - create_journal_entry: 仕訳用の列を追加します。
+    - create_journal_entry: 仕訳列（借方勘定科目, 借方金額, 貸方勘定科目, 貸方金額, 摘要）を追加し、各行に対応する仕訳データを入力します。params: { "journal_entries": [ {"借方勘定科目": "...", "借方金額": "...", "貸方勘定科目": "...", "貸方金額": "...", "摘要": "..."}, ... ] }。journal_entries 配列は対象テーブルの各行と同じ順序・件数で揃えてください。           
 
     操作モードのJSON出力例:
     \`\`\`json
@@ -1327,9 +1536,20 @@ ${dataString}
                 const unmatchedNames: string[] = [];
 
                 processedData.filter((d): d is ProcessedTimecard => d.type === 'timecard').forEach((card: ProcessedTimecard) => {
-                    const targetSheetName = findMatchingSheetName(card.title.name, tempWb.SheetNames);
+                    let targetSheetName: string | null = null;
+                    const userSpecifiedSheet = templateSettings.sheetName.trim();
+                    const cardIndex = processedData.indexOf(card);
+                    const visibilityMap = cardColumnVisibility[cardIndex] || {};
+                    const includeSpacerColumn = visibilityMap[4] !== false;
+
+                    if (userSpecifiedSheet && tempWb.SheetNames.includes(userSpecifiedSheet)) {
+                        targetSheetName = userSpecifiedSheet;
+                    } else if (!userSpecifiedSheet) {
+                        targetSheetName = findMatchingSheetName(card.title.name, tempWb.SheetNames);
+                    }
+
                     if (targetSheetName) {
-                        const transformed = transformTimecardJsonForExcelHandler(card, excelTemplateFile.path, targetSheetName, templateSettings.dataStartCell);
+                        const transformed = transformTimecardJsonForExcelHandler(card, excelTemplateFile.path!, targetSheetName, templateSettings.dataStartCell, includeSpacerColumn);
                         allOperations.push(...transformed.operations);
                     } else {
                         unmatchedNames.push(card.title.name);
@@ -1363,22 +1583,29 @@ ${dataString}
             } else {
                 const wb = XLSX.utils.book_new();
                 const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\|/:*?"<>|]/g, '').substring(0, 31);
+                
+                const currentCardVisibility = cardColumnVisibility[processedData.indexOf(item)] || {};
+                const originalHeaders = ['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤'];
+                const filteredHeaders = originalHeaders.filter((_, colIndex) => currentCardVisibility[colIndex] !== false);
+
                 const ws_data = [
                     ['期間', card.title.yearMonth],
                     ['氏名', card.title.name],
                     [],
-                    ['日付', '曜日', '午前 出勤', '午前 退勤', '午後 出勤', '午後 退勤']
+                    filteredHeaders
                 ];
                 card.days.forEach(day => {
-                    ws_data.push([
+                    const rowData = [
                         day.date,
                         day.dayOfWeek || '',
                         day.morningStart || '',
                         day.morningEnd || '',
-                        '',
+                        '', // 空白列
                         day.afternoonStart || '',
                         day.afternoonEnd || '',
-                    ]);
+                    ];
+                    const filteredRowData = rowData.filter((_, colIndex) => currentCardVisibility[colIndex] !== false);
+                    ws_data.push(filteredRowData);
                 });
                 const ws = XLSX.utils.aoa_to_sheet(ws_data);
                 XLSX.utils.book_append_sheet(wb, ws, sheetName);
@@ -1408,14 +1635,25 @@ ${dataString}
                 const newWb = XLSX.read(XLSX.write(tempWb, { type: 'array', bookType: outputBookType }), { type: 'array' });
                 const dataBySheet = new Map<string, string[][]>();
                 const unmatchedNames: string[] = [];
-                processedData.filter((d): d is ProcessedTable => d.type === 'table').forEach((card: ProcessedTable) => {
-                    const targetSheetName = findMatchingSheetName(card.title.name, newWb.SheetNames);
-                    if (targetSheetName) {
-                        dataBySheet.set(targetSheetName, card.data);
-                    } else {
-                        unmatchedNames.push(card.title.name);
-                    }
-                });
+                    processedData.filter((d): d is ProcessedTable => d.type === 'table').forEach((card: ProcessedTable, cardIndex) => {
+                        let targetSheetName: string | null = null;
+                        const userSpecifiedSheet = templateSettings.sheetName.trim();
+
+                        if (userSpecifiedSheet && newWb.SheetNames.includes(userSpecifiedSheet)) {
+                            targetSheetName = userSpecifiedSheet;
+                        } else if (!userSpecifiedSheet) {
+                            targetSheetName = findMatchingSheetName(card.title.name, newWb.SheetNames);
+                        }
+
+                        if (targetSheetName) {
+                            // ここで列のフィルタリングを適用
+                            const currentCardVisibility = cardColumnVisibility[processedData.indexOf(card)] || {}; // cardIndexではなくprocessedData.indexOf(card)を使用
+                            const filteredData = card.data.map(row => row.filter((_, colIndex) => currentCardVisibility[colIndex] !== false));
+                            dataBySheet.set(targetSheetName, filteredData);
+                        } else {
+                            unmatchedNames.push(card.title.name);
+                        }
+                    });
 
                 newWb.SheetNames.forEach((sheetName: string) => {
                     const newSheet = newWb.Sheets[sheetName];
@@ -1432,16 +1670,20 @@ ${dataString}
                 }
                 
                 if (unmatchedNames.length > 0) {
-                    setError(`転記が完了しましたが、一部の氏名のシートが見つかりませんでした。
-未転記: ${unmatchedNames.join(', ')}`);
+                    setError(`転記が完了しましたが、一部の氏名のシートが見つかりませんでした。 未転記: ${unmatchedNames.join(', ')}`);
                 } else {
                     setError(null);
                 }
             } else {
                 const wb = XLSX.utils.book_new();
-                processedData.filter((d): d is ProcessedTable => d.type === 'table').forEach((card: ProcessedTable) => {
+                processedData.filter((d): d is ProcessedTable => d.type === 'table').forEach((card: ProcessedTable, cardIndex) => {
                   const sheetName = `${card.title.yearMonth} ${card.title.name}`.replace(/[\\|/:*?"<>|]/g, '').substring(0, 31);
-                  const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], card.headers, ...card.data];
+                  
+                  const currentCardVisibility = cardColumnVisibility[processedData.indexOf(card)] || {}; // cardIndexではなくprocessedData.indexOf(card)を使用
+                  const filteredHeaders = card.headers.filter((_, colIndex) => currentCardVisibility[colIndex] !== false);
+                  const filteredData = card.data.map(row => row.filter((_, colIndex) => currentCardVisibility[colIndex] !== false));
+
+                  const ws_data = [['期間', card.title.yearMonth], ['件名', card.title.name], [], filteredHeaders, ...filteredData];
                   const ws = XLSX.utils.aoa_to_sheet(ws_data);
                   XLSX.utils.book_append_sheet(wb, ws, sheetName);
                 });
@@ -1569,21 +1811,51 @@ ${dataString}
                     </summary>
                     <div className="mt-4 border-t pt-4 space-y-3">
                         <p className="text-sm text-gray-600">氏名が記載されたExcelファイル（名簿）をアップロードすると、OCRが読み取った氏名を自動で補正します。名簿のシート名と氏名が記載されている列を指定してください。</p>
-                        <div className="flex items-center gap-4">
-                            <label htmlFor="roster-upload" className="cursor-pointer rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50" onClick={handleRosterUpload}>名簿ファイルを選択</label>
-                            {rosterFile && (
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm text-gray-700">{rosterFile.name} ({roster.length}名)</span>
-                                    <button
-                                        onClick={() => { setRosterFile(null); setRoster([]); setError(null); }}
-                                        className="p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700"
-                                        aria-label="名簿ファイルをクリア"
-                                    >
-                                        <CloseIcon className="w-4 h-4" />
-                                    </button>
+                        
+                        <div>
+                            <div
+                                onDragOver={handleRosterDragOver}
+                                onDragLeave={handleRosterDragLeave}
+                                onDrop={handleRosterDrop}
+                                onClick={() => window.electronAPI ? handleRosterUpload() : rosterFileInputRef.current?.click()}
+                                className={`mt-1 flex justify-center rounded-md border-2 border-dashed p-4 cursor-pointer
+                                    ${isRosterDragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400'}`}
+                            >
+                                <div className="space-y-1 text-center">
+                                    <FileIcon className="mx-auto h-8 w-8 text-gray-400" />
+                                    {rosterFile ? (
+                                        <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                                            <span>{rosterFile.name} ({roster.length}名)</span>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setRosterFile(null);
+                                                    setRoster([]);
+                                                    setError(null);
+                                                }}
+                                                className="p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700"
+                                                aria-label="名簿ファイルをクリア"
+                                            >
+                                                <CloseIcon className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-gray-600">
+                                            <span className="font-semibold text-blue-600">クリックして選択</span> またはドラッグ＆ドロップ
+                                        </p>
+                                    )}
+                                    <p className="text-xs text-gray-500">.xlsx, .xlsm, .xls</p>
                                 </div>
-                            )}
+                            </div>
+                            <input
+                                ref={rosterFileInputRef}
+                                type="file"
+                                className="hidden"
+                                accept=".xlsx,.xlsm,.xls"
+                                onChange={handleRosterInputChange}
+                            />
                         </div>
+
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                              <div><label htmlFor="rosterSheetName" className="block text-sm font-medium leading-6 text-gray-900">シート名 (空欄で最初のシート)</label><input type="text" name="sheetName" id="rosterSheetName" value={rosterSettings.sheetName} onChange={handleRosterSettingsChange} className="block w-full rounded-md border-0 py-1.5 px-2 text-gray-900 bg-white shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6" placeholder="例: 社員一覧" /></div>
                              <div><label htmlFor="rosterColumn" className="block text-sm font-medium leading-6 text-gray-900">氏名が記載されている列または範囲</label><input type="text" name="column" id="rosterColumn" value={rosterSettings.column} onChange={handleRosterSettingsChange} className="block w-full rounded-md border-0 py-1.5 px-2 text-gray-900 bg-white shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6" placeholder="例: B または B2:B50" /></div>
@@ -1612,30 +1884,60 @@ ${dataString}
                                 <p className="text-sm text-gray-600">テンプレートモードでは、OCRで読み取った氏名と一致する名前のシートに、勤怠データ（ヘッダーを除く）のみを転記します。データの書き込みを開始するセルを指定してください。</p>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">テンプレートExcelファイル</label>
-                                    <div className="flex items-center gap-4">
-                                        <button 
-                                            type="button"
-                                            onClick={handleTemplateSelect}
-                                            className="cursor-pointer rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
-                                        >
-                                            ファイルを選択
-                                        </button>
-                                        {excelTemplateFile && (
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-sm text-gray-700">{excelTemplateFile.name}</span>
-                                                <button
-                                                    onClick={() => { setExcelTemplateFile(null); setExcelTemplateData(null); setError(null); }}
-                                                    className="p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700"
-                                                    aria-label="テンプレートファイルをクリア"
-                                                >
-                                                    <CloseIcon className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        )}
+                                    <div
+                                        onDragOver={handleTemplateDragOver}
+                                        onDragLeave={handleTemplateDragLeave}
+                                        onDrop={handleTemplateDrop}
+                                        onClick={() => window.electronAPI ? handleTemplateSelect() : templateFileInputRef.current?.click()}
+                                        className={`mt-1 flex justify-center rounded-md border-2 border-dashed p-4 cursor-pointer
+                                            ${isTemplateDragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400'}`}
+                                    >
+                                        <div className="space-y-1 text-center">
+                                            <FileIcon className="mx-auto h-8 w-8 text-gray-400" />
+                                            {excelTemplateFile ? (
+                                                <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                                                    <span>{excelTemplateFile.name}</span>
+                                                    <button
+                                                        onClick={async (e) => {
+                                                            e.stopPropagation();
+                                                            if (excelTemplateFile?.fromCache && excelTemplateFile.path) {
+                                                                await deleteTempFile(excelTemplateFile.path);
+                                                            }
+                                                            setExcelTemplateFile(null);
+                                                            setExcelTemplateData(null);
+                                                            setError(null);
+                                                        }}
+                                                        className="p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700"
+                                                        aria-label="テンプレートファイルをクリア"
+                                                    >
+                                                        <CloseIcon className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <p className="text-sm text-gray-600">
+                                                    <span className="font-semibold text-blue-600">クリックして選択</span> またはドラッグ＆ドロップ
+                                                </p>
+                                            )}
+                                            <p className="text-xs text-gray-500">.xlsx, .xlsm, .xls</p>
+                                        </div>
                                     </div>
+                                    <input
+                                        ref={templateFileInputRef}
+                                        type="file"
+                                        className="hidden"
+                                        accept=".xlsx,.xlsm,.xls"
+                                        onChange={handleTemplateInputChange}
+                                    />
                                 </div>
                                 <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
-                                     <div><label htmlFor="dataStartCell" className="block text-sm font-medium leading-6 text-gray-900">データ書き込み開始セル</label><input type="text" name="dataStartCell" id="dataStartCell" value={templateSettings.dataStartCell} onChange={handleTemplateSettingsChange} className="block w-full rounded-md border-0 py-1.5 px-2 text-gray-900 bg-white shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6" placeholder="例: C5" /></div>
+                                    <div>
+                                        <label htmlFor="dataStartCell" className="block text-sm font-medium leading-6 text-gray-900">データ書き込み開始セル</label>
+                                        <input type="text" name="dataStartCell" id="dataStartCell" value={templateSettings.dataStartCell} onChange={handleTemplateSettingsChange} className="block w-full rounded-md border-0 py-1.5 px-2 text-gray-900 bg-white shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6" placeholder="例: C5" />
+                                    </div>
+                                    <div>
+                                        <label htmlFor="sheetName" className="block text-sm font-medium leading-6 text-gray-900">シート名（任意）</label>
+                                        <input type="text" name="sheetName" id="sheetName" value={templateSettings.sheetName} onChange={handleTemplateSettingsChange} className="block w-full rounded-md border-0 py-1.5 px-2 text-gray-900 bg-white shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6" placeholder="例: 作業" />
+                                    </div>
                                 </div>
                                 <p className="text-sm text-gray-600 mt-2">
                                     ※タイムカードデータは「午前出勤」「午前退勤」「午後出勤」「午後退勤」の4列のみが転記されます。<br />
@@ -1748,6 +2050,12 @@ ${dataString}
                                     onRowRemove={handleRowRemove}
                                     onColCreate={handleColCreate}
                                     onColRemove={handleColRemove}
+                                    onColumnVisibilityChange={(cardIdx, visibility) => {
+                                      setCardColumnVisibility(prev => ({
+                                        ...prev,
+                                        [cardIdx]: visibility,
+                                      }));
+                                    }}
                                 />
                               </>
                             ) : item.type === 'timecard' ? (
@@ -1777,7 +2085,7 @@ ${dataString}
                                     </div>
                                     <DataTable 
                                         cardIndex={index} 
-                                        headers={['日付', '曜日', '午前 出勤', '午前 退勤', '', '午後 出勤', '午後 退勤']} // 空白列を追加
+                                        headers={timecardHeaders} // 空白列を追加
                                         data={(item.days || []).map(d => [d.date, d.dayOfWeek || '', d.morningStart || '', d.morningEnd || '', '', d.afternoonStart || '', d.afternoonEnd || ''])} // データにも空白列を追加
                                         errors={item.errors}
                                         onDataChange={handleDataChange} 
@@ -1785,6 +2093,12 @@ ${dataString}
                                         onRowRemove={handleRowRemove}
                                         onColCreate={handleColCreate}
                                         onColRemove={handleColRemove}
+                                        onColumnVisibilityChange={(cardIdx, visibility) => {
+                                          setCardColumnVisibility(prev => ({
+                                            ...prev,
+                                            [cardIdx]: visibility,
+                                          }));
+                                        }}
                                     />                            </>
                             ) : (
                               <>

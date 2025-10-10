@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { HotTable } from '@handsontable/react-wrapper';
+import { HotTable, HotTableRef } from '@handsontable/react-wrapper';
 import { registerAllModules } from 'handsontable/registry';
 import 'handsontable/styles/handsontable.min.css'; // Base CSS
 import 'handsontable/styles/ht-theme-main.min.css'; // Main (light) theme CSS
@@ -12,6 +12,36 @@ registerLanguageDictionary(jaJP);
 
 // Handsontableの全モジュールを登録
 registerAllModules();
+
+const visibilityMapsEqual = (a: { [key: number]: boolean }, b: { [key: number]: boolean }) => {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    const numericKey = parseInt(key, 10);
+    if (a[numericKey] !== b[numericKey]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const numericArraysEqual = (a: number[], b: number[]) => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const buildInitialVisibility = (headers: string[]) => {
+  return headers.reduce((acc, _, index) => {
+    acc[index] = headers[index] !== '';
+    return acc;
+  }, {} as { [key: number]: boolean });
+};
 const DataTable: React.FC<{
   cardIndex: number;
   headers: string[];
@@ -22,31 +52,37 @@ const DataTable: React.FC<{
   onRowRemove: (cardIndex: number, rowIndex: number, amount: number) => void;
   onColCreate: (cardIndex: number, colIndex: number, amount: number) => void;
   onColRemove: (cardIndex: number, colIndex: number, amount: number) => void;
-}> = ({ cardIndex, headers, data, errors, onDataChange, onRowCreate, onRowRemove, onColCreate, onColRemove }) => {
+  onColumnVisibilityChange?: (cardIndex: number, visibility: { [key: number]: boolean }) => void;
+}> = ({ cardIndex, headers, data, errors, onDataChange, onRowCreate, onRowRemove, onColCreate, onColRemove, onColumnVisibilityChange }) => {
 
-  const hotTableRef = useRef<HotTable>(null);
+  const hotTableRef = useRef<HotTableRef>(null);
   const [hiddenColumns, setHiddenColumns] = useState<number[]>([]);
   // State is now keyed by column index (number)
   const [columnVisibility, setColumnVisibility] = useState<{ [key: number]: boolean }>({});
+  const lastNotifiedVisibility = useRef<{ [key: number]: boolean } | null>(null);
 
   // Defensive check to ensure data and headers are always arrays
   const safeData = Array.isArray(data) ? data : [];
   const safeHeaders = Array.isArray(headers) ? headers : [];
 
   useEffect(() => {
-    const initialVisibility = safeHeaders.reduce((acc, _, index) => {
-      acc[index] = true; // Use index as key
-      return acc;
-    }, {} as { [key: number]: boolean });
-    setColumnVisibility(initialVisibility);
+    const initialVisibility = buildInitialVisibility(safeHeaders);
+    setColumnVisibility(prev => (visibilityMapsEqual(prev, initialVisibility) ? prev : initialVisibility));
   }, [safeHeaders]);
 
   useEffect(() => {
     const newHiddenColumns = Object.keys(columnVisibility)
       .filter(key => columnVisibility[parseInt(key)] === false)
       .map(key => parseInt(key));
-    setHiddenColumns(newHiddenColumns);
-  }, [columnVisibility]);
+    setHiddenColumns(prev => (numericArraysEqual(prev, newHiddenColumns) ? prev : newHiddenColumns));
+    if (onColumnVisibilityChange) {
+      const previous = lastNotifiedVisibility.current;
+      if (!previous || !visibilityMapsEqual(previous, columnVisibility)) {
+        lastNotifiedVisibility.current = { ...columnVisibility };
+        onColumnVisibilityChange(cardIndex, columnVisibility);
+      }
+    }
+  }, [columnVisibility, onColumnVisibilityChange, cardIndex]);
 
   const handleColumnVisibilityChange = (index: number) => {
     setColumnVisibility(prev => ({ ...prev, [index]: !prev[index] }));
@@ -77,9 +113,6 @@ const DataTable: React.FC<{
     onRowCreate(cardIndex, index, amount);
   };
 
-  const handleAfterRemoveRow = (index: number, amount: number) => {
-    onRowRemove(cardIndex, index, amount);
-  };
 
   const handleAfterCreateCol = (index: number, amount: number) => {
     onColCreate(cardIndex, index, amount);
@@ -168,6 +201,19 @@ const DataTable: React.FC<{
             },
             remove_row: {
               name: '行を削除',
+              callback: function() {
+                if (hotTableRef.current && hotTableRef.current.hotInstance) {
+                  const hot = hotTableRef.current.hotInstance;
+                  const selection = hot.getSelectedLast();
+                  if (selection) {
+                    const [r1, , r2] = selection;
+                    const rowIndex = Math.min(r1, r2);
+                    const amount = Math.abs(r2 - r1) + 1;
+                    onRowRemove(cardIndex, rowIndex, amount);
+                  }
+                }
+                return false; // Prevent default action
+              }
             },
             hsep1: '---------', // Separator
             ...(isTimecard ? {} : { // Conditional column items
@@ -229,7 +275,7 @@ const DataTable: React.FC<{
                     const selection = hot.getSelectedLast();
                     if (selection) {
                       const [r, c] = selection;
-                      hot.paste(text, r, c);
+                      (hot as any).paste(text, r, c);
                     }
                   } catch (err) {
                     console.error('Failed to paste from clipboard:', err);
@@ -241,9 +287,7 @@ const DataTable: React.FC<{
           }
         }}
         language='ja-JP' // Set the language to Japanese
-        allowInsertRow={true}
         allowInsertColumn={!isTimecard} // Disable column insert for timecards
-        allowRemoveRow={true}
         allowRemoveColumn={!isTimecard} // Disable column remove for timecards
         fillHandle={true}
         manualRowMove={true}
@@ -251,10 +295,9 @@ const DataTable: React.FC<{
         licenseKey="non-commercial-and-evaluation"
         afterChange={handleAfterChange}
         afterCreateRow={handleAfterCreateRow}
-        afterRemoveRow={handleAfterRemoveRow}
+
         afterCreateCol={handleAfterCreateCol}
         afterRemoveCol={handleAfterRemoveCol}
-        theme="light" // Set the theme to light
       />
     </div>
   );

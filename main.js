@@ -784,3 +784,33 @@ ipcMain.handle('read-roster-file', async (event, { filePath, sheetName, column, 
     });
   });
 });
+
+// --- Temporary File Management API ---
+ipcMain.handle('cache-temp-file', async (event, data) => {
+  const tempDir = app.getPath('temp');
+  const tempFileName = `${uuidv4()}.json`;
+  const tempFilePath = path.join(tempDir, tempFileName);
+  try {
+    await fs.promises.writeFile(tempFilePath, data, 'utf8');
+    log.info(`Cached temp file at: ${tempFilePath}`);
+    return { success: true, path: tempFilePath };
+  } catch (error) {
+    log.error('Failed to cache temp file:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('delete-temp-file', async (event, filePath) => {
+  try {
+    if (fs.existsSync(filePath)) {
+      await fs.promises.unlink(filePath);
+      log.info(`Deleted temp file: ${filePath}`);
+      return { success: true };
+    }
+    log.warn(`Attempted to delete non-existent temp file: ${filePath}`);
+    return { success: true }; // Still success if file is already gone
+  } catch (error) {
+    log.error('Failed to delete temp file:', error);
+    return { success: false, error: error.message };
+  }
+});
