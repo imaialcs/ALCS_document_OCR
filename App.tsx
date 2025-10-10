@@ -298,6 +298,7 @@ const App = () => {
   const [excelTemplateFile, setExcelTemplateFile] = useState<{ name: string; path: string | null; fromCache?: boolean } | null>(null);
   const [excelTemplateData, setExcelTemplateData] = useState<ArrayBuffer | null>(null);
   const [outputMode, setOutputMode] = useState<'new' | 'template'>('new');
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [templateSettings, setTemplateSettings] = useState({ dataStartCell: 'E6', sheetName: '' });
   const [isTemplateDragOver, setIsTemplateDragOver] = useState(false);
   const [isRosterDragOver, setIsRosterDragOver] = useState(false);
@@ -659,8 +660,8 @@ const App = () => {
   };
 
 
-  const applyTemplateFile = (name: string, path: string, buffer: ArrayBuffer) => {
-    setExcelTemplateFile({ name, path });
+  const applyTemplateFile = (name: string, path: string | null, buffer: ArrayBuffer, fromCache: boolean) => {
+    setExcelTemplateFile({ name, path, fromCache });
     setExcelTemplateData(buffer);
     setError(null);
     if (templateFileInputRef.current) {
@@ -675,11 +676,25 @@ const App = () => {
       return;
     }
 
-    const filePath = (file as any)?.path;
+    let filePath = (file as any)?.path;
+    let fromCache = false;
 
     try {
       const arrayBuffer = await readFileAsArrayBuffer(file);
-      applyTemplateFile(file.name, filePath || null, arrayBuffer);
+
+      if (!filePath) {
+        // ファイルパスがない場合、一時ファイルとしてキャッシュする
+        const result = await window.electronAPI.cacheTempFile(file.name, arrayBuffer);
+        if (result?.success && result.path) {
+          filePath = result.path;
+          fromCache = true;
+        } else {
+          setError(result?.error ?? 'テンプレートファイルの一時保存に失敗しました。');
+          return;
+        }
+      }
+
+      applyTemplateFile(file.name, filePath || null, arrayBuffer, fromCache);
     } catch (e) {
       console.error('Failed to read dropped template file:', e);
       const errorMessage = e instanceof Error ? e.message : String(e);
@@ -728,7 +743,7 @@ const App = () => {
         try {
           const uint8Array = new Uint8Array(result.data);
           const arrayBuffer = uint8Array.slice().buffer;
-          applyTemplateFile(result.name, result.path, arrayBuffer);
+          applyTemplateFile(result.name, result.path, arrayBuffer, false);
         } catch (e) {
           console.error("Failed to process template file data:", e);
           const errorMessage = e instanceof Error ? e.message : String(e);
@@ -1551,7 +1566,7 @@ ${dataString}
         if (item.type === 'timecard') {
             const card = item as ProcessedTimecard;
             if (outputMode === 'template') {
-                if (!excelTemplateFile?.path || !excelTemplateData) {
+                if (!excelTemplateFile || !excelTemplateData) {
                     setError('タイムカードをテンプレートに転記するには、Excelテンプレートファイルを指定してください。');
                     return;
                 }
@@ -1582,9 +1597,26 @@ ${dataString}
                 });
 
                 if (allOperations.length > 0) {
+                    // 1. 出力ファイルのパスをユーザーに選択させる
+                    const outputBookType = excelTemplateFile?.name.endsWith('.xlsm') ? 'xlsm' : 'xlsx';
+                    const saveResult = await window.electronAPI.saveFile({
+                        title: 'テンプレートに転記したExcelファイルを保存',
+                        defaultPath: `転記結果_${getBasename(excelTemplateFile?.name || 'template')}`,
+                        filters: [{ name: 'Excel Files', extensions: [outputBookType] }],
+                    }, new Uint8Array()); // ダミーのUint8Arrayを渡す
+
+                    if (saveResult.canceled || !saveResult.path) {
+                        setError('ファイルの保存がキャンセルされました。');
+                        return;
+                    }
+                    const outputFilePath = saveResult.path;
+
+                    // 2. Python引数を構築
                     const pythonArgs = {
                         action: 'write_template',
                         template_path: excelTemplateFile.path,
+                        output_path: outputFilePath, // 追加
+                        output_book_type: outputBookType, // 追加
                         operations: allOperations
                     };
                     const result = await (window.electronAPI as any).runPythonScript({
@@ -1592,9 +1624,9 @@ ${dataString}
                     });
 
                     if (result.success && result.message) {
-                        if (excelTemplateFile?.path) {
-                            await window.electronAPI.openFile(excelTemplateFile.path);
-                        }
+                        // 成功した場合、保存したファイルを開く
+                        await window.electronAPI.openFile(outputFilePath);
+                        setSuccessMessage(`テンプレートへの転記が完了し、ファイルを開きました: ${outputFilePath}`);
                     } else if (result.error) {
                         throw new Error(result.error);
                     }
