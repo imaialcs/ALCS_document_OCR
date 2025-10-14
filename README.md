@@ -64,6 +64,9 @@ npm run dist
 - alcs
 
 ## Changelog
+- v1.3.0 (2025-10-14): Electronおよびelectron-builderのバージョンアップ。
+    - Electronを38.2.2にアップデートしました。
+    - electron-builderを26.1.0にアップデートしました。
 - v1.2.10 (2025-10-08): 安定性向上のためのロールバックと修正。
     - ベースバージョンをv1.2.5に戻し、その後の不安定な変更を破棄しました。
     - AIアシスタントのモデルをOpenRouterの'deepseek/deepseek-chat-v3.1:free'に変更しました。
