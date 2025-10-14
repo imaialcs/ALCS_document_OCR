@@ -85,7 +85,11 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     },
-    "publish": "github",
+    "publish": {
+      "provider": "github",
+      "owner": "imaialcs",
+      "repo": "ALCS_document_OCR"
+    },
     "artifactName": "${productName}-Setup-${version}.${ext}"
   }
 }
