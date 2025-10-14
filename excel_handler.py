@@ -132,7 +132,7 @@ def read_roster_data(file_path, sheet_name, column_or_range, has_header=False):
         log_error(e, f"while reading roster data from {file_path}")
         return {"success": False, "error": str(e)}
 
-def process_with_openpyxl(template_path, operations):
+def process_with_openpyxl(template_path, operations, output_path=None):
     if not OPENPYXL_AVAILABLE:
         return {"success": False, "error": "openpyxl library is not available."}
     is_xlsm = template_path.lower().endswith('.xlsm')
@@ -171,7 +171,8 @@ def process_with_openpyxl(template_path, operations):
             processed_count += 1
 
         if processed_count > 0:
-            wb.save(template_path)
+            save_path = output_path if output_path else template_path
+            wb.save(save_path)
         return {"success": True, "message": f"{processed_count}件の操作をExcelファイルに正常に転記しました。"}
     except Exception as e:
         log_error(e, f"while processing with openpyxl: {template_path}")
@@ -207,9 +208,10 @@ if __name__ == "__main__":
         elif action == "write_template":
             template_path = input_data.get("template_path")
             operations = input_data.get("operations")
+            output_path = input_data.get("output_path") # output_path を受け取る
             if not all([template_path, operations]):
                 raise ValueError("Missing required parameters for write_template action.")
-            result = process_with_openpyxl(template_path, operations)
+            result = process_with_openpyxl(template_path, operations, output_path)
         else:
             result = {"success": False, "error": f"Unknown action: {action}"}
 

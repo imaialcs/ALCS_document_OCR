@@ -763,8 +763,8 @@ const App = () => {
   };
 
   const fetchAiSuggestions = async (data: ProcessedData[]) => {
-    const activeSpreadsheet = data.find(d => d.type === 'table' || d.type === 'timecard');
-    if (!activeSpreadsheet) {
+    const activeSpreadsheets = data.filter(d => d.type === 'table' || d.type === 'timecard');
+    if (activeSpreadsheets.length === 0) {
       setSuggestedOperations([]);
       return;
     }
@@ -778,7 +778,7 @@ const App = () => {
 思考プロセスは、日本の会計専門家がたどるべき論理的なステップに基づいています。
 
 現在のスプレッドシートデータ（JSON形式）:
-${JSON.stringify(activeSpreadsheet, null, 2)}
+${JSON.stringify(activeSpreadsheets, null, 2)}
 
 ---
 指示:
@@ -1597,26 +1597,11 @@ ${dataString}
                 });
 
                 if (allOperations.length > 0) {
-                    // 1. 出力ファイルのパスをユーザーに選択させる
-                    const outputBookType = excelTemplateFile?.name.endsWith('.xlsm') ? 'xlsm' : 'xlsx';
-                    const saveResult = await window.electronAPI.saveFile({
-                        title: 'テンプレートに転記したExcelファイルを保存',
-                        defaultPath: `転記結果_${getBasename(excelTemplateFile?.name || 'template')}`,
-                        filters: [{ name: 'Excel Files', extensions: [outputBookType] }],
-                    }, new Uint8Array()); // ダミーのUint8Arrayを渡す
-
-                    if (saveResult.canceled || !saveResult.path) {
-                        setError('ファイルの保存がキャンセルされました。');
-                        return;
-                    }
-                    const outputFilePath = saveResult.path;
-
-                    // 2. Python引数を構築
+                    // 1. Python引数を構築
                     const pythonArgs = {
                         action: 'write_template',
-                        template_path: excelTemplateFile.path,
-                        output_path: outputFilePath, // 追加
-                        output_book_type: outputBookType, // 追加
+                        template_path: excelTemplateFile.path!, // 非nullアサーションを追加
+                        output_path: excelTemplateFile.path!, // 非nullアサーションを追加
                         operations: allOperations
                     };
                     const result = await (window.electronAPI as any).runPythonScript({
@@ -1625,8 +1610,8 @@ ${dataString}
 
                     if (result.success && result.message) {
                         // 成功した場合、保存したファイルを開く
-                        await window.electronAPI.openFile(outputFilePath);
-                        setSuccessMessage(`テンプレートへの転記が完了し、ファイルを開きました: ${outputFilePath}`);
+                        await window.electronAPI.openFile(excelTemplateFile.path!); // 非nullアサーションを追加
+                        setSuccessMessage(`テンプレートへの転記が完了し、ファイルを開きました: ${excelTemplateFile.path}`);
                     } else if (result.error) {
                         throw new Error(result.error);
                     }

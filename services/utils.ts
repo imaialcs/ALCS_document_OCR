@@ -144,14 +144,29 @@ export async function withRetry<T>(
  * @returns The JSON object formatted for the excel_handler.exe.
  */
 export const transformTimecardJsonForExcelHandler = (timecardJson: any, templatePath: string, sheetName: string, dataStartCell: string, includeSpacerColumn: boolean): any => {
-  // Extract main data and convert it to a 2D array for the Excel sheet.
-  // Null values are converted to empty strings.
-  const dayData = timecardJson.days.map((day: any) => [
-    day.morningStart || '',
-    day.morningEnd || '',
-    day.afternoonStart || '',
-    day.afternoonEnd || '',
-  ]);
+  let dayData = timecardJson.days.map((day: any) => {
+    const row = [
+      day.morningStart || '',
+      day.morningEnd || '',
+      '', // 空白列に対応するデータ
+      day.afternoonStart || '',
+      day.afternoonEnd || '',
+    ];
+    return row;
+  });
+
+  let columnOffsets = [0, 0, 0, 0, 0]; // morningStart, morningEnd, spacer, afternoonStart, afternoonEnd
+
+  if (!includeSpacerColumn) {
+    // 空白列を含めない場合、dayDataから空白列を削除
+    dayData = dayData.map((row: string[]) => {
+      const newRow = [...row];
+      newRow.splice(2, 1); // 3番目の要素（インデックス2）を削除
+      return newRow;
+    });
+    // column_offsetsも調整
+    columnOffsets = [0, 0, 0, 0]; // morningStart, morningEnd, afternoonStart, afternoonEnd
+  }
 
   // Define the operations for the excel_handler.
   // ユーザーが指定した開始セルから勤怠データのみを書き込む
@@ -160,7 +175,7 @@ export const transformTimecardJsonForExcelHandler = (timecardJson: any, template
       sheet_name: sheetName,
       data: dayData,
       start_cell: dataStartCell,
-      column_offsets: [0, 1, 0, 0], // morningStart, morningEnd, (skip 1 column), afternoonStart, afternoonEnd
+      column_offsets: columnOffsets,
     },
   ];
 
